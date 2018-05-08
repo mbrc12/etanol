@@ -1,0 +1,3 @@
+[submodule "bytecode-parser"]
+	path = bytecode-parser
+	url = https://github.com/mbrc12/bytecode-parser/

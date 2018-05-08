@@ -1,0 +1,5 @@
+.stack-work/
+etanol.cabal
+*~
+*.swp
+*.swo
