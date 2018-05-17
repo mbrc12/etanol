@@ -1,0 +1,4 @@
+[submodule "bytecode-parser"]
+	path = bytecode-parser
+        url = https://www.github.com/mbrc12/bytecode-parser.git
+        branch = experimental

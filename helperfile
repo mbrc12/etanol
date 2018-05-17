@@ -1,0 +1,7 @@
+d <- readRawClassFile "/home/mbrc/JavaTries/Swit"
+let Right x = d
+:set -XDuplicateRecordFields
+let m = methods x !! 1
+let a = attributes (m :: MethodInfo)
+let c = code $ attributeInfo $ a !! 0
+
