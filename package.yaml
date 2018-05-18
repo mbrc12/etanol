@@ -22,6 +22,8 @@ description:         Please see the README on GitHub at <https://github.com/mbrc
 dependencies:
 - base >= 4.7 && < 5
 - fgl  >= 5.6
+- directory >= 1.3
+- filepath >= 1.4
 library:
   source-dirs: src
 
