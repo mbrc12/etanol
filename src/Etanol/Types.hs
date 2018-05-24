@@ -1,4 +1,8 @@
-{-# LANGUAGE DeriveGeneric, DefaultSignatures, OverloadedStrings, ScopedTypeVariables #-}
+{-# LANGUAGE DeriveGeneric, DefaultSignatures, OverloadedStrings, ScopedTypeVariables, DuplicateRecordFields #-}
+
+{- Etanol.Types. Includes basic Database functionality for Etanol field and method data.
+Also includes helper functions for Etanol.Analysis
+-}
 
 module Etanol.Types (
                 getClassName, FieldType(..),
@@ -6,7 +10,9 @@ module Etanol.Types (
                 MethodName, isInit, initDB,
                 saveFieldDB, saveMethodDB,
                 getMethodDB, getFieldDB,
-                FieldDB, MethodDB
+                FieldDB(..), MethodDB(..),
+                NamedMethodCode(..),
+                getMethods
                 ) where
 
 import qualified Data.Map.Strict as M
@@ -17,6 +23,12 @@ import System.FilePath.Posix ((</>))
 import System.Directory (doesFileExist)
 import System.Exit (die)
 import qualified Data.ByteString as B
+
+import ByteCodeParser.BasicTypes hiding (ClassName)
+import ByteCodeParser.Reader
+import ByteCodeParser.Instructions
+
+import Etanol.ControlFlowGraph
 
 import GHC.Generics
 import Data.Serialize
@@ -94,3 +106,31 @@ saveMethodDB configLocation map = let   methodDBPath = configLocation </> method
                                         B.writeFile methodDBPath bs
 
 
+adjoinClassName :: ClassName -> String -> MethodName
+adjoinClassName x y = x ++ "." ++ y
+
+-- this is used in getMethods, because class names are saved like com/a/b/c/Class. We want it to be like com.a.b.c.Class
+fixClassName :: String -> ClassName
+fixClassName =  map (\x -> if x == '/' then '.' else x)
+
+type Descriptor = [(Int, Bool)] -- see `descriptorIndices` in ByteCodeParser.Reader, for how this works
+type NamedMethodCode = (MethodName, Descriptor, CFG)
+
+findCodeAttribute :: [AttributeInfo] -> [CodeAtom]
+findCodeAttribute ainfo =  (code :: AInfo -> [CodeAtom]) $
+                                attributeInfo $ 
+                                        head $ filter (\at -> attributeType at == ATCode) ainfo -- there is expected to be only 1 code attribute in a method
+
+getMethod :: ClassName -> MethodInfo -> NamedMethodCode
+getMethod className methodInfo = let methodName :: String = adjoinClassName className $ name (methodInfo :: MethodInfo)
+                                     methodDescriptor :: Descriptor = descriptor (methodInfo :: MethodInfo)
+                                     methodCode :: [CodeAtom] = findCodeAttribute $ attributes (methodInfo :: MethodInfo)
+                                     methodCFG = generateControlFlowGraph methodCode
+                                 in (methodName, methodDescriptor, methodCFG)
+
+
+getMethods :: RawClassFile -> [NamedMethodCode]
+getMethods cf = map (getMethod className) mthds
+                where
+                        className = fixClassName $ thisClass cf
+                        mthds     = methods cf

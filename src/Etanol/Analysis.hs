@@ -9,6 +9,9 @@ module Etanol.Analysis (
 import ByteCodeParser.BasicTypes
 import ByteCodeParser.Reader
 import ByteCodeParser.Instructions
+import Etanol.Types
+import Etanol.ControlFlowGraph
+
 
 
 

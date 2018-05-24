@@ -3,7 +3,9 @@
 module Etanol.ControlFlowGraph
         (
                 generateControlFlowGraph,
-                CFG,
+                CFG(..), dummyStart, dummyEnd,
+                NodeData(..), EdgeData(..), theStart,
+                theEnd, visualize
         ) where
 
 -- TODO: Add the names of all the imported fields/functions in the imports below, by examining what is used in the code.
@@ -15,6 +17,8 @@ import ByteCodeParser.Reader    -- same in this case
 import ByteCodeParser.Instructions
 import Data.Graph.Inductive.Graph
 import Data.Graph.Inductive.PatriciaTree -- see docs for `fgl` library for what these import
+
+import Data.Graph.Inductive.Dot (showDot, fglToDot)
 
 import Control.Monad
 
@@ -99,5 +103,6 @@ getEdges (pos, (opcode : rest)) next
         | otherwise =                   [(pos, next, EdgeData)]
 
 
-
+visualize :: CFG -> String
+visualize cfg = showDot $ fglToDot cfg
 
