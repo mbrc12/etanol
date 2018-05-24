@@ -40,7 +40,7 @@ packages:
 - bytecode-parser
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
-# extra-deps: []
+# extra-deps: [selda-0.2.0.0, selda-sqlite-0.1.6.0]
 
 # Override default flag values for local packages and extra-deps
 # flags: {}
