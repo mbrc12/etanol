@@ -1,0 +1,25 @@
+- Reference consumers -
+
+50 aaload : arr, idx -> val
+
+83 aastore : arr, idx, val -> 
+
+1 aconst_null : -> null
+
+25 aload idx : -> obj
+
+42-45 aload_0,1,2,3 : -> obj
+
+189 anewarray idx : count -> arr
+
+176 areturn : obj -> 
+
+190 arraylength : arr -> len
+
+58 astore idx : obj -> 
+
+75-78 astore_0,1,2,3 : obj -> 
+
+191 athrow : obj -> obj
+
+

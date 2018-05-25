@@ -5,6 +5,7 @@ Also includes helper functions for Etanol.Analysis
 -}
 
 module Etanol.Types (
+                Descriptor(..),
                 getClassName, FieldType(..),
                 MethodType(..), FieldName,
                 MethodName, isInit, initDB,
@@ -12,7 +13,12 @@ module Etanol.Types (
                 getMethodDB, getFieldDB,
                 FieldDB(..), MethodDB(..),
                 NamedMethodCode(..),
-                getMethods
+                NamedField(..),
+                getMethods, getFields,
+                FieldDescriptor(..), MethodDescriptor(..),
+                FieldID(..), MethodID(..),
+                firstof2, secondof2, firstof3, secondof3, thirdof3,
+                adjoinClassName
                 ) where
 
 import qualified Data.Map.Strict as M
@@ -40,10 +46,29 @@ fieldsFile, methodsFile :: FilePath
 fieldsFile = "fields.db"
 methodsFile = "methods.db"
 
+firstof2 :: (a, b) -> a
+firstof2 (a, b) = a
 
+secondof2 :: (a, b) -> b
+secondof2 (a, b) = b
+
+firstof3 :: (a, b, c) -> a
+firstof3 (a, b, c) = a
+
+secondof3 :: (a, b, c) -> b
+secondof3 (a, b, c) = b
+
+thirdof3 :: (a, b, c) -> c
+thirdof3 (a, b, c) = c
+
+type FieldDescriptor = String
+type MethodDescriptor = String
 type FieldName = String
 type MethodName = String
 type ClassName = String
+
+type FieldID = (FieldName, FieldDescriptor)
+type MethodID = (MethodName, MethodDescriptor)
 
 data FieldType = Normal | FinalStatic 
                         deriving (Show, Eq, Generic)
@@ -53,8 +78,8 @@ data MethodType = Pure | Impure | StrongImpure
                         deriving (Show, Eq, Generic)
 instance Serialize MethodType
 
-type FieldDB = M.Map FieldName FieldType
-type MethodDB = M.Map MethodName MethodType
+type FieldDB = M.Map FieldID FieldType
+type MethodDB = M.Map MethodID MethodType
 
 isInit :: FilePath -> IO Bool
 isInit configLocation = let     fieldDBPath = configLocation </> fieldsFile
@@ -114,7 +139,7 @@ fixClassName :: String -> ClassName
 fixClassName =  map (\x -> if x == '/' then '.' else x)
 
 type Descriptor = [(Int, Bool)] -- see `descriptorIndices` in ByteCodeParser.Reader, for how this works
-type NamedMethodCode = (MethodName, Descriptor, CFG)
+type NamedMethodCode = (MethodID, [CodeAtom], CFG)
 
 findCodeAttribute :: [AttributeInfo] -> [CodeAtom]
 findCodeAttribute ainfo =  (code :: AInfo -> [CodeAtom]) $
@@ -123,10 +148,10 @@ findCodeAttribute ainfo =  (code :: AInfo -> [CodeAtom]) $
 
 getMethod :: ClassName -> MethodInfo -> NamedMethodCode
 getMethod className methodInfo = let methodName :: String = adjoinClassName className $ name (methodInfo :: MethodInfo)
-                                     methodDescriptor :: Descriptor = descriptor (methodInfo :: MethodInfo)
+                                     methodDescriptor :: String  = descriptorString (methodInfo :: MethodInfo)
                                      methodCode :: [CodeAtom] = findCodeAttribute $ attributes (methodInfo :: MethodInfo)
                                      methodCFG = generateControlFlowGraph methodCode
-                                 in (methodName, methodDescriptor, methodCFG)
+                                 in ((methodName, methodDescriptor), methodCode, methodCFG)
 
 
 getMethods :: RawClassFile -> [NamedMethodCode]
@@ -134,3 +159,17 @@ getMethods cf = map (getMethod className) mthds
                 where
                         className = fixClassName $ thisClass cf
                         mthds     = methods cf
+
+type NamedField = (FieldID, [FieldAccessFlag])
+
+getField :: ClassName -> FieldInfo -> NamedField
+getField className fieldInfo = let fieldName :: String = adjoinClassName className $ name (fieldInfo :: FieldInfo)
+                                   fieldDesc :: String = descriptor (fieldInfo :: FieldInfo)
+                                   fieldAccessFlags  = accessFlags (fieldInfo :: FieldInfo)    
+                               in ((fieldName, fieldDesc), fieldAccessFlags)
+
+getFields :: RawClassFile -> [NamedField]
+getFields cf = map (getField className) flds
+                where
+                        className = fixClassName $ thisClass cf
+                        flds      = fields cf
