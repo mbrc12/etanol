@@ -70,12 +70,12 @@ type ClassName = String
 type FieldID = (FieldName, FieldDescriptor)
 type MethodID = (MethodName, MethodDescriptor)
 
-data FieldType = Normal | FinalStatic 
-                        deriving (Show, Eq, Generic)
+data FieldType = Normal | Basic | FinalStatic | UnanalyzableField
+                        deriving (Show, Eq, Ord, Generic)
 instance Serialize FieldType 
 
-data MethodType = Pure | Impure | StrongImpure
-                        deriving (Show, Eq, Generic)
+data MethodType = Pure | Impure | Local | StrongImpure | UnanalyzableMethod
+                        deriving (Show, Eq, Ord, Generic)
 instance Serialize MethodType
 
 type FieldDB = M.Map FieldID FieldType

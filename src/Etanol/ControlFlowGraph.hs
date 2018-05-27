@@ -28,9 +28,9 @@ import Control.Monad
 
 data NodeData = NodeData {
                 code     :: [Word8] -- from BasicTypes
-        } deriving (Show, Eq)
+        } deriving (Show, Eq, Ord)
 
-data EdgeData = EdgeData deriving (Show, Eq)
+data EdgeData = EdgeData deriving (Show, Eq, Ord)
 
 type CFG = Gr NodeData EdgeData
 
