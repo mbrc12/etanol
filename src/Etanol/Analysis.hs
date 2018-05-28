@@ -1,8 +1,9 @@
-{-# LANGUAGE DuplicateRecordFields, OverloadedStrings #-}
+{-# LANGUAGE DuplicateRecordFields, OverloadedStrings, MultiWayIf #-}
 
 module Etanol.Analysis (
                 getField, putField, invokeVirtual, invokeStatic, invokeSpecial,
-                isFinalStaticField, dependencies, AnyID(..), uniques
+                isFinalStaticField, dependencies, AnyID(..), uniques,
+                basicop, definedAt, nonBasicop
         ) where
 
 -- update what is being imported
@@ -13,6 +14,10 @@ import Data.Map.Strict ((!?), (!))
 import qualified Data.Map.Strict as M
 import Data.List
 import Debug.Trace (trace)
+import Control.Monad
+import Control.Applicative
+import Data.Graph.Inductive.Graph
+import Data.Graph.Inductive.PatriciaTree
 
 import ByteCodeParser.BasicTypes
 import ByteCodeParser.Reader
@@ -20,6 +25,7 @@ import ByteCodeParser.Instructions
 import Etanol.Types
 import Etanol.ControlFlowGraph
 import Etanol.Decompile
+import Etanol.MonadFX
 
 type NamePrefix = String -- prefixes of strings, anynames
 type AnyName    = String
@@ -230,7 +236,7 @@ verdictifyMethod cpool fDB mDB (mID, mCode, mCFG) =
                         then StrongImpure
                         else    if nonEmpty nofs           -- accesses some non final static field
                                 then Impure
-                                else let mutations = sort $ getMutations cpool mDB mCode -- indices of the parameters potentially modified / mutated
+                                else let mutations = sort $ getMutations cpool mDB mCFG -- indices of the parameters potentially modified / mutated
                                      in  if null mutations
                                          then Pure
                                          else if length mutations == 1 && head mutations == (0, BasicMutation)   -- modifies only this in basic fields
@@ -244,5 +250,176 @@ getStaticFields cpool ((_, (op : rest)) : restcode)
                                                       in  (getFieldName cpool $ fromIntegral idx) : getStaticFields cpool restcode
         | otherwise                             =     getStaticFields cpool restcode
 
-getMutations :: [ConstantInfo] -> MethodDB -> [CodeAtom] -> [Mutation]
-getMutations = undefined
+
+-- | Get all mutations done to passed parameters in code
+getMutations :: [ConstantInfo] -> MethodDB -> CFG -> [Mutation]
+getMutations cpool mDB cfg = undefined --stepThrough cpool mDB cfg theStart
+
+data StackObject = SBasic | SReference Int | SReferenceFresh
+                        deriving (Eq, Show)
+
+type Stack = [StackObject] -- elements added at the beginning
+type Stacks = [Stack]
+type LocalHeap = M.Map Int StackObject
+type LocalHeaps = [LocalHeap]
+
+basicop :: (Int, Int) -> [Word8]        -- basicop (input stack, output stack) -> which ops
+basicop (2, 1) = [96, 98..114] ++ [120, 122 .. 130] ++ [149, 150] ++ [159..164] ++ [136, 137, 142, 144]
+basicop (0, 0) = [0,  132, 177, 167, 200]
+basicop (0, 1) = [26..29] ++ [34..37] ++ [2..8] ++ [11..13] ++  [21, 23] ++ [16, 17]
+basicop (1, 0) = [59..62] ++ [67..70] ++ [54, 56] ++ [153..158] ++ [170, 171] ++ [172, 174]
+basicop (1, 1) = [116, 118] ++ [134, 139, 145, 146, 147]
+basicop (0, 2) = [9, 10, 14, 15, 20, 22, 24] ++ [30..33] ++ [38..41]
+basicop (2, 0) = [55, 57] ++ [63..66] ++ [71..74] ++ [173, 175]
+basicop (4, 2) = [97, 99..115] ++ [121, 123 .. 131]
+basicop (2, 2) = [117, 119, 138, 143]
+basicop (1, 2) = [133, 135, 140, 141]
+basicop (4, 1) = [148, 151, 152]
+
+definedAt :: [(Int, Int)]
+definedAt = [(2, 1), (0, 0), (0, 1), (1, 0), (1, 1), (0, 2), (2, 0), (4, 2),
+                (2, 2), (1, 2), (4, 1)]
+
+basicopAll :: [Word8]
+basicopAll = concatMap basicop definedAt
+
+-- consume objects and put stuff on stack that is basic
+nonBasicop :: (Int, Int) -> [Word8]
+nonBasicop (1, 1) = [193, 190]
+nonBasicop (1, 0) = [198, 199, 176, 58, 87]
+nonBasicop (2, 0) = [165, 166, 88]
+
+
+
+--consumeOp :: [ConstantInfo] -> MethodDB -> CFG -> Int -> Stack -> Stacks
+--consumeOp cpool mDB cfg pos = 
+--        let     consumePartial = consumeOp cpool mDB cfg
+--
+
+-- Note that the list implementation for Stacks and cpos dramatically slows down code
+-- However since the numbers are expected to be small we do not modify this as present
+-- but must be replaced with arrays with constant time access and modifications in the
+-- future.
+data AnalysisBundle = AnalysisBundle {
+                        cpool   :: [ConstantInfo],
+                        mDB     :: MethodDB,
+                        fDB     :: FieldDB,
+                        cfg     :: CFG,
+                        lHeaps  :: LocalHeaps,
+                        stacks  :: Stacks,                              
+                        cpos    :: [Int] }        deriving Show
+
+type AnalysisM = FX AnalysisBundle MethodType   -- the analysis monad
+
+getCpool :: AnalysisM [ConstantInfo]
+getCpool = pure cpool <*> getS
+
+getMDB :: AnalysisM MethodDB
+getMDB = pure mDB <*> getS
+
+getFDB :: AnalysisM FieldDB
+getFDB = pure fDB <*> getS
+
+getCfg :: AnalysisM CFG
+getCfg = pure cfg <*> getS
+
+getStacks :: AnalysisM Stacks
+getStacks = pure stacks <*> getS
+
+getLocalHeaps :: AnalysisM LocalHeaps
+getLocalHeaps = pure lHeaps <*> getS
+
+getCPos :: AnalysisM [Int]
+getCPos = pure cpos <*> getS
+
+setCPos :: [Int] -> AnalysisM ()
+setCPos z = do
+                AnalysisBundle a b c d e f _ <- getS
+                putS $ AnalysisBundle a b c d e f z
+
+setStacks :: Stacks -> AnalysisM ()
+setStacks stks = do
+                        AnalysisBundle a b c d e _ f <- getS
+                        putS $ AnalysisBundle a b c d e stks f
+
+setLocalHeaps :: LocalHeaps -> AnalysisM ()
+setLocalHeaps lheaps = do
+                        AnalysisBundle a b c d _ e f <- getS
+                        putS $ AnalysisBundle a b c d lheaps e f
+
+replaceElem :: [a] -> Int -> a -> [a]
+replaceElem xs p v = take p xs ++ [v] ++ drop (p + 1) xs
+
+stackOperate :: Stack -> (Int, Int) -> Stack
+stackOperate stk (inp, outp) =  if length stk < inp 
+                                then error "Stack is smaller than number of inputs required"
+                                else replicate outp SBasic ++ drop inp stk
+                
+
+setStackPos :: Int -> Stack -> AnalysisM ()
+setStackPos pos stk = do
+                        AnalysisBundle a b c d e f g <- getS
+                        putS $ AnalysisBundle a b c d e (replaceElem f pos stk) g
+
+setLocalHeapPos :: Int -> LocalHeap -> AnalysisM ()
+setLocalHeapPos pos lheap = do
+                                AnalysisBundle a b c d e f g <- getS
+                                putS $ AnalysisBundle a b c d (replaceElem e pos lheap) f g
+
+consumeCode :: AnalysisM [CodeAtom] -- code bytes
+consumeCode = do
+                g <- getCfg
+                p <- getCPos
+                stk <- getStacks
+                loc <- getLocalHeaps
+
+                let q = concatMap (\(l, s, c) -> zip3 (repeat l) (repeat s) (suc g c)) $ zip3 loc stk p
+                let np = map thirdof3 q
+
+                setCPos np
+                setLocalHeaps $ map firstof3 q
+                setStacks $ map secondof3 q
+
+                return $ map (nodecode . fromJust . lab g) $ np
+
+getAnalysis :: AnalysisM MethodType
+getAnalysis = do
+                cas   <- consumeCode
+                pos   <- getCPos
+
+                whenExit (null pos) Pure
+
+                stks <- getStacks
+                locs <- getLocalHeaps
+                
+                results <- forM [0..length cas - 1] $ \j -> exceptify $ analyseAtom j (cas !! j) (locs !! j) (stks !! j)
+        
+                whenExit (UnanalyzableMethod `elem` results) UnanalyzableMethod
+                whenExit (StrongImpure `elem` results) StrongImpure
+                whenExit (Impure `elem` results) Impure
+                
+                getAnalysis 
+
+
+newOp, getFieldOp, putFieldOp, monitorEnterOp, monitorExitOp, aThrowOp :: Word8
+newOp = 187
+getFieldOp = 180
+putFieldOp = 181
+aThrowOp   = 191
+
+monitorEnterOp = 194
+monitorExitOp = 195
+
+analyseAtom :: Int -> CodeAtom -> LocalHeap -> Stack -> AnalysisM MethodType
+analyseAtom j (pos, (op : rest)) loc stk = 
+        do
+                whenExit (op == monitorEnterOp || op == monitorExitOp) UnanalyzableMethod
+                whenExit (op == aThrowOp) StrongImpure
+        
+                if (op `elem` basicopAll)
+                then    let tup = head $ filter (\t -> op `elem` basicop t) definedAt
+                        in  setStackPos j $ stackOperate stk tup
+                else    return ()
+                whenExit (op `elem` basicopAll) Pure
+                
+                return $ undefined

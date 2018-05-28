@@ -27,7 +27,7 @@ import Control.Monad
 
 
 data NodeData = NodeData {
-                code     :: [Word8] -- from BasicTypes
+                nodecode     :: CodeAtom -- from BasicTypes
         } deriving (Show, Eq, Ord)
 
 data EdgeData = EdgeData deriving (Show, Eq, Ord)
@@ -35,14 +35,14 @@ data EdgeData = EdgeData deriving (Show, Eq, Ord)
 type CFG = Gr NodeData EdgeData
 
 dummyStart, dummyEnd :: LNode NodeData 
-dummyStart = (-1, NodeData [])
-dummyEnd   = (-2, NodeData [])
+dummyStart = newNode (-1) (-1, [])
+dummyEnd   = newNode (-2) (-2, [])
 
 theStart, theEnd :: Int
 theStart   = -1
 theEnd     = -2
 
-newNode :: Int -> [Word8] -> LNode NodeData
+newNode :: Int -> CodeAtom -> LNode NodeData
 newNode pos label = (pos, NodeData label)
 
 
@@ -53,7 +53,7 @@ oneOff xs = zip xs $ tail (map (fromIntegral . fst) xs) ++ [theEnd]
                                                 
 
 generateControlFlowGraph :: [CodeAtom] -> CFG
-generateControlFlowGraph code = let     g1 = mkGraph (map (\(pos, subcode) -> newNode (fromIntegral pos) subcode) code) []
+generateControlFlowGraph code = let     g1 = mkGraph (map (\ca@(pos, subcode) -> newNode (fromIntegral pos) ca) code) []
                                         g1'= insNodes [dummyStart, dummyEnd] g1 
                                         g2 = insEdges (concatMap (uncurry getEdges) (oneOff code)) g1'
                                         g2'= insEdge (theStart, fst (code !! 0), EdgeData) g2
