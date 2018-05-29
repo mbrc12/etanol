@@ -5,10 +5,10 @@ Also includes helper functions for Etanol.Analysis
 -}
 
 module Etanol.Types (
-                Descriptor(..),
-                getClassName, FieldType(..),
-                MethodType(..), FieldName,
-                MethodName, isInit, initDB,
+                Descriptor(..), getClassName, 
+                FieldType(..), MethodType(..), 
+                FieldNullType(..), MethodNullType(..),
+                FieldName, MethodName, isInit, initDB,
                 saveFieldDB, saveMethodDB,
                 getMethodDB, getFieldDB,
                 FieldDB(..), MethodDB(..),
@@ -18,6 +18,7 @@ module Etanol.Types (
                 FieldDescriptor(..), MethodDescriptor(..),
                 FieldID(..), MethodID(..),
                 firstof2, secondof2, firstof3, secondof3, thirdof3,
+                firstof4, secondof4, thirdof4, fourthof4,
                 adjoinClassName
                 ) where
 
@@ -61,6 +62,16 @@ secondof3 (a, b, c) = b
 thirdof3 :: (a, b, c) -> c
 thirdof3 (a, b, c) = c
 
+firstof4 :: (a, b, c, d) -> a
+secondof4 :: (a, b, c, d) -> b
+thirdof4 :: (a, b, c, d) -> c
+fourthof4 :: (a, b, c, d) -> d
+
+firstof4 (a, b, c, d) = a
+secondof4 (a, b, c, d) = b
+thirdof4 (a, b, c, d) = c
+fourthof4 (a, b, c, d) = d
+
 type FieldDescriptor = String
 type MethodDescriptor = String
 type FieldName = String
@@ -72,10 +83,16 @@ type MethodID = (MethodName, MethodDescriptor)
 
 data FieldType = Normal | Basic | FinalStatic | UnanalyzableField
                         deriving (Show, Eq, Ord, Generic)
-instance Serialize FieldType 
+
+data FieldNullType = NonNullField | NullableField deriving (Show, Eq, Ord, Generic)
+
+instance Serialize FieldType    -- heavylifting done by deriving Generic 
 
 data MethodType = Pure | Impure | Local | StrongImpure | UnanalyzableMethod
                         deriving (Show, Eq, Ord, Generic)
+
+data MethodNullType = NonNullMethod | NullableMethod deriving (Show, Eq, Ord, Generic)
+
 instance Serialize MethodType
 
 type FieldDB = M.Map FieldID FieldType
@@ -139,7 +156,7 @@ fixClassName :: String -> ClassName
 fixClassName =  map (\x -> if x == '/' then '.' else x)
 
 type Descriptor = [(Int, Bool)] -- see `descriptorIndices` in ByteCodeParser.Reader, for how this works
-type NamedMethodCode = (MethodID, [CodeAtom], CFG)
+type NamedMethodCode = (MethodID, [CodeAtom], CFG, [MethodAccessFlag])
 
 findCodeAttribute :: [AttributeInfo] -> [CodeAtom]
 findCodeAttribute ainfo =  (code :: AInfo -> [CodeAtom]) $
@@ -151,7 +168,8 @@ getMethod className methodInfo = let methodName :: String = adjoinClassName clas
                                      methodDescriptor :: String  = descriptorString (methodInfo :: MethodInfo)
                                      methodCode :: [CodeAtom] = findCodeAttribute $ attributes (methodInfo :: MethodInfo)
                                      methodCFG = generateControlFlowGraph methodCode
-                                 in ((methodName, methodDescriptor), methodCode, methodCFG)
+                                     methodAccessFlags = accessFlags (methodInfo :: MethodInfo)
+                                 in ((methodName, methodDescriptor), methodCode, methodCFG, methodAccessFlags)
 
 
 getMethods :: RawClassFile -> [NamedMethodCode]

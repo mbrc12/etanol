@@ -1,9 +1,7 @@
 {-# LANGUAGE DuplicateRecordFields, OverloadedStrings, MultiWayIf #-}
 
 module Etanol.Analysis (
-                getField, putField, invokeVirtual, invokeStatic, invokeSpecial,
-                isFinalStaticField, dependencies, AnyID(..), uniques,
-                basicop, definedAt, nonBasicop
+                isFinalStaticField, dependencies, AnyID(..), uniques
         ) where
 
 -- update what is being imported
@@ -39,17 +37,22 @@ initialStrongImpureList = ["java.io", "java.net", "javax.swing",
 isInitialStrongImpure :: AnyName -> Bool
 isInitialStrongImpure namae = namae `elem` initialStrongImpureList
 
-getField, putField, invokeStatic, invokeSpecial, invokeVirtual :: Word8
-getField = 180
-putField = 181
-invokeVirtual = 182
-invokeSpecial = 183
-invokeStatic  = 184
-
+getFieldOp, putFieldOp, invokeStaticOp, invokeSpecialOp, invokeVirtualOp, invokeInterfaceOp, invokeDynamicOp :: Word8
+getFieldOp = 180
+putFieldOp = 181
+invokeVirtualOp = 182
+invokeSpecialOp = 183
+invokeStaticOp= 184
+invokeInterfaceOp = 185
+invokeDynamicOp = 186
 -- When reading an index from the bytecode into the constantPool, decrement it by 1, as is done here
 -- using pred
 toIndex :: [Word8] -> Word32
 toIndex xs = pred $ sum $ map (uncurry (*)) $ zip (reverse $ map fromIntegral xs) $ map (2^) [0..] 
+
+-- local heap indices do not need decrementing.
+toLocalHeapIndex :: [Word8] -> Int
+toLocalHeapIndex = fromIntegral . succ . toIndex 
 
 isFinalStaticField :: [ConstantInfo] -> FieldDB -> Int -> Maybe Bool
 isFinalStaticField cpool fieldDB idx = let      fid     = getFieldName cpool idx
@@ -88,13 +91,13 @@ dependencies cpool codes = uniques $ depsMethod cpool codes
 depsMethod :: [ConstantInfo] -> [CodeAtom] -> [AnyID]
 depsMethod cpool [] = []
 depsMethod cpool ((idx, op : rest) : restcode)
-        | op `elem` [getField, putField, getStatic, putStatic]          = let   idx = toIndex rest
-                                                                                fld = getFieldName cpool $ fromIntegral idx
-                                                                          in [EFieldID fld] ++ depsMethod cpool restcode
-        | op `elem` [invokeSpecial, invokeStatic, invokeVirtual]        = let   idx = toIndex rest
-                                                                                mthd = getMethodName cpool $ fromIntegral idx
-                                                                          in [EMethodID mthd] ++ depsMethod cpool restcode
-        | otherwise                                                     = depsMethod cpool restcode
+        | op `elem` [getFieldOp, putFieldOp, getStatic, putStatic]          =   let     idx = toIndex rest
+                                                                                        fld = getFieldName cpool $ fromIntegral idx
+                                                                                in [EFieldID fld] ++ depsMethod cpool restcode
+        | op `elem` [invokeSpecialOp, invokeStaticOp, invokeVirtualOp]      =   let     idx = toIndex rest
+                                                                                        mthd = getMethodName cpool $ fromIntegral idx
+                                                                                in [EMethodID mthd] ++ depsMethod cpool restcode
+        | otherwise                                                         =   depsMethod cpool restcode
 
 
 data Status = Analyzing | NotAnalyzed
@@ -180,7 +183,7 @@ analyseMethod ::        [ConstantInfo] ->
 analyseMethod cpool loadedThings loadedThingsStatus fDB mDB thing =
         let     mID = methodID thing
                 mData = methodData (loadedThings ! thing)
-                (_, mCode, _) = mData
+                (_, mCode, _, af) = mData
                 deps = dependencies cpool mCode
                 mDeps = filter isMethod deps    -- :: [AnyID]
                 fDeps = filter isField deps     -- :: [AnyID]
@@ -189,16 +192,19 @@ analyseMethod cpool loadedThings loadedThingsStatus fDB mDB thing =
                 nAl  = mNAl ++ fNAl
                 nA  = filter (\x -> M.notMember x loadedThings) nAl 
                         -- not previously analyzed and also not loaded, but required for analysis
-        in      if nonEmpty nA
+                        --
+         in     if (AMNative `elem` af || AMSynchronized `elem` af || AMVarargs `elem` af)    -- These identifiers enable immediate disqualification
                 then (loadedThingsStatus, fDB, M.insert mID UnanalyzableMethod mDB)
-                else let        (loadedThingsStatus', fDB', mDB') = feedAll cpool loadedThings loadedThingsStatus fDB mDB nAl
-                                -- after this all deps of this method is not in loadedThingsStatus, as they have all been analyzed
-                                -- recursively. So we can now safely analyse this method itself
-                                -- But it may happen that this method itself got into a loop and was analyzed already
-                     in         if M.member thing loadedThingsStatus' 
-                                then let verdict  = verdictifyMethod cpool fDB mDB mData
-                                     in  (loadedThingsStatus', fDB', M.insert mID verdict mDB')
-                                else (loadedThingsStatus', fDB', mDB')
+                else    if nonEmpty nA
+                        then (loadedThingsStatus, fDB, M.insert mID UnanalyzableMethod mDB)
+                        else let        (loadedThingsStatus', fDB', mDB') = feedAll cpool loadedThings loadedThingsStatus fDB mDB nAl
+                                        -- after this all deps of this method is not in loadedThingsStatus, as they have all been analyzed
+                                        -- recursively. So we can now safely analyse this method itself
+                                        -- But it may happen that this method itself got into a loop and was analyzed already
+                             in         if M.member thing loadedThingsStatus' 
+                                        then let verdict  = verdictifyMethod cpool fDB mDB mData
+                                             in  (loadedThingsStatus', fDB', M.insert mID verdict mDB')
+                                        else (loadedThingsStatus', fDB', mDB')
 
 -- analyze method for type when all its dependencies are met
 ----------------------------------------------------------------------
@@ -223,7 +229,7 @@ data MutationType = BasicMutation | ObjectMutation      -- type of mutation, bas
 type Mutation = (Int, MutationType)
 
 verdictifyMethod :: [ConstantInfo] -> FieldDB -> MethodDB -> NamedMethodCode -> MethodType
-verdictifyMethod cpool fDB mDB (mID, mCode, mCFG) = 
+verdictifyMethod cpool fDB mDB (mID, mCode, mCFG, mAF) = 
         let     deps = dependencies cpool mCode
                 stat = getStaticFields cpool mCode                              -- static field accesses by method
                 nofs = filter (\x -> (fDB ! x) /= FinalStatic) stat             -- non final static ones
@@ -255,7 +261,7 @@ getStaticFields cpool ((_, (op : rest)) : restcode)
 getMutations :: [ConstantInfo] -> MethodDB -> CFG -> [Mutation]
 getMutations cpool mDB cfg = undefined --stepThrough cpool mDB cfg theStart
 
-data StackObject = SBasic | SReference Int | SReferenceFresh
+data StackObject = SBasic | SBasicLong | SReference Int | SReferenceFresh | SObjArrayReference
                         deriving (Eq, Show)
 
 type Stack = [StackObject] -- elements added at the beginning
@@ -264,42 +270,63 @@ type LocalHeap = M.Map Int StackObject
 type LocalHeaps = [LocalHeap]
 
 basicop :: (Int, Int) -> [Word8]        -- basicop (input stack, output stack) -> which ops
-basicop (2, 1) = [96, 98..114] ++ [120, 122 .. 130] ++ [149, 150] ++ [159..164] ++ [136, 137, 142, 144]
+basicop (2, 1) = [96, 98..114] ++ [120, 122 .. 130] ++ [149, 150] ++ [159..164] ++ [148, 151, 152]
 basicop (0, 0) = [0,  132, 177, 167, 200]
 basicop (0, 1) = [26..29] ++ [34..37] ++ [2..8] ++ [11..13] ++  [21, 23] ++ [16, 17]
 basicop (1, 0) = [59..62] ++ [67..70] ++ [54, 56] ++ [153..158] ++ [170, 171] ++ [172, 174]
-basicop (1, 1) = [116, 118] ++ [134, 139, 145, 146, 147]
-basicop (0, 2) = [9, 10, 14, 15, 20, 22, 24] ++ [30..33] ++ [38..41]
-basicop (2, 0) = [55, 57] ++ [63..66] ++ [71..74] ++ [173, 175]
-basicop (4, 2) = [97, 99..115] ++ [121, 123 .. 131]
-basicop (2, 2) = [117, 119, 138, 143]
-basicop (1, 2) = [133, 135, 140, 141]
-basicop (4, 1) = [148, 151, 152]
+basicop (1, 1) = [116, 118] ++ [134, 139, 145, 146, 147] ++ [136, 137, 142, 144]
+basicop (0, 2) = []
+basicop (2, 0) = [173, 175]
+basicop (4, 2) = []
+basicop (2, 2) = []
+basicop (1, 2) = []
+basicop (4, 1) = []
 
-definedAt :: [(Int, Int)]
-definedAt = [(2, 1), (0, 0), (0, 1), (1, 0), (1, 1), (0, 2), (2, 0), (4, 2),
+basicopL :: (Int, Int) -> [Word8]
+basicopL (0, 1) = [9, 10, 14, 15, 20, 22, 24] ++ [30..33] ++ [38..41]
+basicopL (1, 0) = [55, 57] ++ [63..66] ++ [71..74] 
+basicopL (2, 1) = [97, 99..115] ++ [121, 123 .. 131]
+basicopL (1, 1) = [133, 135, 140, 141, 138, 143, 117, 119]
+
+
+definedAtBasic :: [(Int, Int)]
+definedAtBasic = [(2, 1), (0, 0), (0, 1), (1, 0), (1, 1), (0, 2), (2, 0), (4, 2),
                 (2, 2), (1, 2), (4, 1)]
+definedAtBasicL :: [(Int, Int)]
+definedAtBasicL = [(0, 1), (1, 0), (2, 1), (1, 1)]
 
-basicopAll :: [Word8]
-basicopAll = concatMap basicop definedAt
+basicopAll, basicopLAll :: [Word8]
+basicopAll = concatMap basicop definedAtBasic
+basicopLAll = concatMap basicopL definedAtBasicL
 
 -- consume objects and put stuff on stack that is basic
-nonBasicop :: (Int, Int) -> [Word8]
+-- also not operators that may have a non basic side effect, like iastore
+nonBasicop :: (Int, Int) -> [Word8]             
 nonBasicop (1, 1) = [193, 190]
-nonBasicop (1, 0) = [198, 199, 176, 58, 87]
-nonBasicop (2, 0) = [165, 166, 88]
+nonBasicop (1, 0) = [198, 199, 176, 58]
+nonBasicop (2, 0) = [165, 166]
+nonBasicop (2, 1) = [46, 48, 51, 52, 53]
+nonBasicOp (2, 2) = []
 
+nonBasicOpL (2, 1) = [47, 49]
 
+definedAtNonBasic :: [(Int, Int)]
+definedAtNonBasic = [(1, 1), (1, 0), (2, 0), (2, 1), (2, 2)]
 
---consumeOp :: [ConstantInfo] -> MethodDB -> CFG -> Int -> Stack -> Stacks
---consumeOp cpool mDB cfg pos = 
---        let     consumePartial = consumeOp cpool mDB cfg
---
+definedAtNonBasicL :: [(Int, Int)]
+definedAtNonBasicL = [(2, 1)]
+
+nonBasicopAll, nonBasicopLAll :: [Word8]
+nonBasicopAll = concatMap nonBasicop definedAtNonBasic
+nonBasicopLAll = concatMap nonBasicopL definedAtNonBasicL
 
 -- Note that the list implementation for Stacks and cpos dramatically slows down code
 -- However since the numbers are expected to be small we do not modify this as present
 -- but must be replaced with arrays with constant time access and modifications in the
 -- future.
+
+type MutLocs = [Int]
+
 data AnalysisBundle = AnalysisBundle {
                         cpool   :: [ConstantInfo],
                         mDB     :: MethodDB,
@@ -307,7 +334,8 @@ data AnalysisBundle = AnalysisBundle {
                         cfg     :: CFG,
                         lHeaps  :: LocalHeaps,
                         stacks  :: Stacks,                              
-                        cpos    :: [Int] }        deriving Show
+                        cpos    :: [Int],
+                        muts    :: [MutLocs] }        deriving Show
 
 type AnalysisM = FX AnalysisBundle MethodType   -- the analysis monad
 
@@ -334,37 +362,64 @@ getCPos = pure cpos <*> getS
 
 setCPos :: [Int] -> AnalysisM ()
 setCPos z = do
-                AnalysisBundle a b c d e f _ <- getS
-                putS $ AnalysisBundle a b c d e f z
+                AnalysisBundle a b c d e f _ g <- getS
+                putS $ AnalysisBundle a b c d e f z g
 
 setStacks :: Stacks -> AnalysisM ()
 setStacks stks = do
-                        AnalysisBundle a b c d e _ f <- getS
-                        putS $ AnalysisBundle a b c d e stks f
+                        AnalysisBundle a b c d e _ f g <- getS
+                        putS $ AnalysisBundle a b c d e stks f g
 
 setLocalHeaps :: LocalHeaps -> AnalysisM ()
 setLocalHeaps lheaps = do
-                        AnalysisBundle a b c d _ e f <- getS
-                        putS $ AnalysisBundle a b c d lheaps e f
+                        AnalysisBundle a b c d _ f g h <- getS
+                        putS $ AnalysisBundle a b c d lheaps f g h
 
 replaceElem :: [a] -> Int -> a -> [a]
 replaceElem xs p v = take p xs ++ [v] ++ drop (p + 1) xs
 
+-- remove anything but add short basic things
 stackOperate :: Stack -> (Int, Int) -> Stack
 stackOperate stk (inp, outp) =  if length stk < inp 
                                 then error "Stack is smaller than number of inputs required"
                                 else replicate outp SBasic ++ drop inp stk
-                
+
+-- remove anything but adds long things
+stackOperateL :: Stack -> (Int, Int) -> Stack
+stackOperateL stk (inp, outp) =  if length stk < inp 
+                                then error "Stack is smaller than number of inputs required"
+                                else replicate outp SBasicLong ++ drop inp stk
 
 setStackPos :: Int -> Stack -> AnalysisM ()
 setStackPos pos stk = do
-                        AnalysisBundle a b c d e f g <- getS
-                        putS $ AnalysisBundle a b c d e (replaceElem f pos stk) g
+                        AnalysisBundle a b c d e f g h <- getS
+                        putS $ AnalysisBundle a b c d e (replaceElem f pos stk) g h
 
 setLocalHeapPos :: Int -> LocalHeap -> AnalysisM ()
 setLocalHeapPos pos lheap = do
-                                AnalysisBundle a b c d e f g <- getS
-                                putS $ AnalysisBundle a b c d (replaceElem e pos lheap) f g
+                                AnalysisBundle a b c d e f g h <- getS
+                                putS $ AnalysisBundle a b c d (replaceElem e pos lheap) f g h
+
+getLocalHeapElem :: LocalHeap -> Int -> StackObject
+getLocalHeapElem loc pos = loc ! pos                    -- error if does not exist
+
+localHeapOperate :: LocalHeap -> Int -> StackObject -> LocalHeap 
+localHeapOperate loc pos obj = M.insert pos obj loc
+
+getMuts :: AnalysisM [MutLocs]
+getMuts = pure muts <*> getS
+
+setMuts :: [MutLoc] -> AnalysisM ()
+setMuts ms = do
+                AnalysisBundle a b c d e f g _ <- getS
+                putS $ AnalysisBundle a b c d e f g ms
+
+-- add a mutation location to a specific instance
+addMut :: Int -> Int -> AnalysisM ()
+addMut pos v = do
+                mutl <- getMuts 
+                setMuts $ replaceElem mutl pos (v : (mutl !! pos)) 
+
 
 consumeCode :: AnalysisM [CodeAtom] -- code bytes
 consumeCode = do
@@ -372,13 +427,15 @@ consumeCode = do
                 p <- getCPos
                 stk <- getStacks
                 loc <- getLocalHeaps
+                mut <- getMuts
 
-                let q = concatMap (\(l, s, c) -> zip3 (repeat l) (repeat s) (suc g c)) $ zip3 loc stk p
-                let np = map thirdof3 q
+                let q = concatMap (\(l, s, c, m) -> zip3 (repeat l) (repeat s) (suc g c) (repeat m)) $ zip4 loc stk p mut
+                let np = map thirdof4 q
 
                 setCPos np
-                setLocalHeaps $ map firstof3 q
-                setStacks $ map secondof3 q
+                setLocalHeaps $ map firstof4 q
+                setStacks $ map secondof4 q
+                setMuts $ map fourthof4 q
 
                 return $ map (nodecode . fromJust . lab g) $ np
 
@@ -400,26 +457,325 @@ getAnalysis = do
                 
                 getAnalysis 
 
+-- position of this in the param list
+thisPos :: Int
+thisPos = 0
 
-newOp, getFieldOp, putFieldOp, monitorEnterOp, monitorExitOp, aThrowOp :: Word8
+loads1, loads2, stores1, stores2, loadsi, storesi, loads, stores :: [Word8] -- can potentially do type changing local heap modifications
+loads1 = [21, 23, 25] ++ [26 .. 29] ++ [34..37] ++ [42..45]
+loads2 = [21 .. 45] \\ loads1
+loadsi = [21..25]               -- indexed
+loads = loads1 ++ loads2 ++ loadsi
+stores1 = [54, 56, 58] ++ [59..62] ++ [67..70] ++ [75..78]
+stores2 = [54..78] \\ stores2
+storesi = [54..58]              -- indexed
+stores = stores1 ++ stores2 ++ storesi
+
+getIdxOp :: [Word8] -> Int
+getIdxOp (op : rest) =  if op `elem` (loadsi ++ storesi) 
+                        then toLocalHeapIndex rest 
+                        else if 
+                                | op `elem` [26, 30, 34, 38, 42, 59, 63, 67, 71, 75]    -> 0
+                                | op `elem` [27, 31, 35, 39, 43, 60, 64, 68, 72, 76]    -> 1
+                                | op `elem` [28, 32, 36, 40, 44, 61, 65, 69, 73, 77]    -> 2
+                                | op `elem` [29, 33, 37, 41, 45, 62, 66, 70, 74, 78]    -> 3
+                                | otherwise                                             -> error $ "Invalid operator for loading / storing : " ++ show op
+
+
+{--
+The current analysis uses the following strategy.
+For a method to be analyzable it cannot be recursive. --- Important!
+"""""""""""""""""""""""""""""""" cannot use monitor* ops
+"""""""""""""""""""""""""""""""" cannot use varargs -- not implemented yet!
+If it calls anything from initialStrongImpureList transitively, then it is strong impure.
+If it uses exceptions, it is strong impure.
+If it assigns Reference type fields to any object/array (fresh or parameter), it is impure. -- refers to putfield
+=> All accessed object fields are fresh. -- refers to getfield (only Fresh objects or basic objects put into stack on calls to getField)
+Otherwise it can be impure, local or pure.
+Suppose basic fields are assigned to some parameters.
+If any parameter other than 0 are assigned then it is impure (0 == this)
+If only 0 is assigned it is local, additionally local methods must return **void**.
+Otherwise it is pure.
+--}
+
+newOp, newArrayOp, getFieldOp, putFieldOp, monitorEnterOp, monitorExitOp, aThrowOp, ldcOp, ldc_wOp :: Word8
+multianewArrayOp, popOp, pop2Op, dupOp, dup_x1Op, dup_x2Op, dup2Op, dup2_x1Op, dup2_x2Op, swapOp :: Word8
+aaloadOp, iastoreOp, lastoreOp, fastoreOp, dastoreOp, aastoreOp, bastoreOp, castoreOp, sastoreOp :: Word8
+
 newOp = 187
+aconstNullOp = 1
+newArrayOp = 188
+anewArrayOp = 189
+multianewArrayOp = 197
 getFieldOp = 180
 putFieldOp = 181
 aThrowOp   = 191
-
 monitorEnterOp = 194
 monitorExitOp = 195
+ldcOp = 18
+ldc_wOp = 19
+popOp = 87
+pop2Op = 88
+dupOp = 89
+dup_x1Op = 90
+dup_x2Op = 91
+dup2Op = 92
+dup2_x1Op = 93
+dup2_x2Op = 94
+swapOp = 95 
+aaloadOp = 50
+iastoreOp = 79
+lastoreOp = 80
+fastoreOp = 81
+dastoreOp = 82
+aastoreOp = 83
+bastoreOp = 84
+castoreOp = 85
+sastoreOp = 86
 
 analyseAtom :: Int -> CodeAtom -> LocalHeap -> Stack -> AnalysisM MethodType
-analyseAtom j (pos, (op : rest)) loc stk = 
+analyseAtom j (pos, ca@(op : rest)) loc stk = 
         do
-                whenExit (op == monitorEnterOp || op == monitorExitOp) UnanalyzableMethod
+                whenExit (op == monitorEnterOp || op == monitorExitOp || op == invokeInterfaceOp || op == invokeDynamicOp) UnanalyzableMethod
                 whenExit (op == aThrowOp) StrongImpure
-        
-                if (op `elem` basicopAll)
-                then    let tup = head $ filter (\t -> op `elem` basicop t) definedAt
+                
+                cpool <- getCpool
+                fDB   <- getFDB 
+                mDB   <- getMDB
+
+                if op `elem` loads
+                then let idx = getIdxOp ca
+                     in if op `elem` loads1 
+                        then let elm = getLocalHeapElem loc idx
+                             in  setStackPos j $ elm : stk
+                        else let elm = getLocalHeapElem loc idx -- push long, but the thing is the same;  elm is SBasicLong
+                             in  setStackPos j $ elm : stk
+                else let idx = getIdxOp ca
+                     in  if op `elem` stores1
+                         then let elm = head stk
+                              in do  
+                                        setLocalHeapPos j $ localHeapOperate loc idx elm
+                                        setStackPos j     $ stackOperate stk (1, 0)  -- remove 1
+                         else let elm = head stk
+                              in do
+                                        setLocalHeapPos j $ localHeapOperate loc idx elm
+                                        setStackPos j     $ stackOperateL stk (1, 0)  -- remove 1 only, but now elm is SBasicLong
+
+                 
+                
+                if elem op $ basicopAll \\ (loads ++ stores)            -- do everything basic that does not involve the local heap
+                then    let tup = head $ filter (\t -> op `elem` basicop t) definedAtBasic
                         in  setStackPos j $ stackOperate stk tup
                 else    return ()
-                whenExit (op `elem` basicopAll) Pure
+    
+                if elem op $ basicopLAll \\ (loads ++ stores)            -- do everything basic that does not involve the local heap; special for long
+                then    let tup = head $ filter (\t -> op `elem` basicopL t) definedAtBasicL
+                        in  setStackPos j $ stackOperateL stk tup
+                else    return ()
+
+                if elem op $ nonBasicopAll \\ (loads ++ stores)            -- see defn for nonBasicop
+                then    let tup = head $ filter (\t -> op `elem` nonBasicop t) definedAtNonBasic
+                        in  setStackPos j $ stackOperate stk tup
+                else    return ()
                 
+                if elem op $ nonBasicopLAll \\ (loads ++ stores)            -- see defn for nonBasicop; special for long ops
+                then    let tup = head $ filter (\t -> op `elem` nonBasicopL t) definedAtNonBasicL
+                        in  setStackPos j $ stackOperateL stk tup
+                else    return ()
+
+
+                whenExit (elem op $ basicopAll ++ nonBasicopAll ++ loads ++ stores) Pure
+                
+                {- Following this point, everything deals with operands specifically. See the brief spec above. -}
+
+                when (op == newOp || op == newArrayOp) $ do 
+                        setStackPos j $ SReferenceFresh : stk           -- push fresh reference
+
+                when (op == anewArrayOp || op == multianewArrayOp) $ do
+                        setStackPos j $ SObjArrayReference : stk        -- push new obj array ref
+                        
+                when (op == aconstNullOp) $ do
+                        setStackPos j $ SReferenceFresh : stk           -- push fresh reference for null
+                                                                        
+                -- note that the following analysis is performed above as well, but it will be removed
+                -- in favour of fully monadic processing.
+
+                whenExit ((op == getStatic || op == putStatic) && getSTypeOfFieldWord8 rest cpool == OFReference) Impure
+                whenExit ((op == getStatic || op == putStatic) && (not $ isFinalStaticFieldWord8 rest cpool fDB)) Impure
+                
+                when (op == getStatic) $ do
+                        let ty = getSTypeOfConstantWord8 rest cpool
+                        if  | ty == OFBasic     -> setStackPos j (SBasic : stk)
+                            | ty == OFBasicLong -> setStackPos j (SBasicLong : stk)
+                            | _                 -> error "Unexpected exception. getStatic does not expect a Reference"
+
+                when (op == putStatic) $ error "putStatic not expected!"
+
+                when (op == getFieldOp) $ do
+                        let ftype    = getSTypeOfFieldWord8 rest cpool
+                            topelem  = head stk
+                            rstk     = tail stk
+                        in      if ftype == OFBasic 
+                                then setStackPos j (SBasic : rstk) 
+                                else setStackPos j (topelem : rstk)     -- topelem ==    SReferenceFresh then this is also fresh reference
+                                                                        --               SReference Int then this is also int SReference
+                when (op == putFieldOp) $ do
+                        let ftype    = getSTypeOfFieldWord8 rest cpool
+                            obj      = head stk    
+                        in      if ftype == OFReference
+                                then exitWith Impure
+                                else do
+                                       setStackPos j $ stackOperate stk (2, 0)
+                                       let ty = isParamRef obj
+                                       if isJust ty
+                                       then addMut j $ fromJust ty              -- add to parameter mutations
+                                       else return ()                           -- else modifies fresh param
+
+                
+                {- Analysis for the whole suite of pops, dups and also swap -}
+                
+                when (op == popOp) $ setStackPos j $ tail stk
+                when (op == pop2Op) $ setStackPos j $ tail $ tail stk
+
+                when (op == dupOp) $ do
+                        let ~(e1 : rest) = stk
+                        setStackPos j $ [e1, e1] ++ rest
+                
+                when (op == dup_x1Op) $ do
+                        let ~(e1 : (e2 : rest)) = stk
+                        setStackPos j $ [e1, e2, e1] ++ rest
+
+                when (op == dup_x2Op) $ do
+                        let ~(e1 : (e2 : rest)) = stk
+                        if isCat2 e2
+                        then setStackPos j $ [e1, e2, e1] ++ rest
+                        else let (e3 : rest') = rest
+                             in setStackPos j $ [e1, e2, e3, e1] ++ rest'   
+                
+                when (op == dup2Op) $ do
+                        let ~(e1 : rest) = stk
+                        if isCat2 e1
+                        then setStackPos j $ [e1, e1] ++ rest
+                        else    let ~(e2 : rest) = stk
+                                in setStackPos j $ [e1, e2, e1, e2] ++ rest
+
+                when (op == dup2_x1Op) $ do
+                        let ~(e1 : (e2 : rest)) = stk
+                        if isCat2 e1
+                        then setStackPos j $ [e1, e2, e1] ++ rest
+                        else    let ~(e3 : rest') = stk
+                                in setStackPos j $ [e1, e2, e3, e1, e2] ++ rest'
+ 
+                when (op == dup2_x2Op) $ do
+                        let ~(e1 : (e2 : (e3 : rest))) = stk
+                        if isCat2 e1
+                        then setStackPos j $ [e1, e2, e3, e1] ++ rest
+                        else    let ~(e4 : rest') = rest
+                                in setStackPos j $ [e1, e2, e3, e4, e1, e2] ++ rest'
+                 
+                when (op == swapOp) $ do
+                        let ~(e1 : (e2 : rest)) = stk
+                        setStackPos j $ [e2, e1] ++ rest
+                        
+                {- dups, swaps, pops complete -}
+                        
+                when (op == checkCast) $ return ()
+
+                when (op == ldcOp || op == ldc_wOp) $ do
+                        let ftype = getSTypeOfConstantWord8 rest cpool
+                        if | ftype == OFBasic           -> setStackPos j $ (SBasic : stk)
+                           | ftype == OFBasicLong       -> setStackPos j $ (SBasicLong : stk)
+                           | ftype == OFReference       -> setStackPos j $ (SReferenceFresh : stk)
+                           | otherwise                  -> exitWith UnanalyzableMethod 
+                
+                when (op == aaloadOp) $ do
+                        let ~(_ : (e1 : rest)) = stk
+                        
+                        if | e1 == SReferenceFresh      -> setStackPos j $ (SReferenceFresh : rest)
+                           | _                          -> setStackPos j $ (e1 : rest)
+                        
+                when (op == iastoreOp || op == fastoreOp || op == lastoreOp || op == dastoreOp) $ do
+                        let ~(_ : (_ : (e1 : rest))) = stk
+                            ty = isParamRef e1
+                        if isJust ty
+                        then setStackPos j rest
+                        else setStackPos j rest
+                
+                when (op == aastoreOp) $ do
+                        let ~(_ : (_ : (e1 : rest))) = stk
+                            ty = isParamRef e1
+                        setStackPos j rest
+                        if isJust ty
+                        then exitWith Impure
+                        else return ()
+                
+                when (op == invokeVirtualOp) $ do
+                     let mID              = getMethodName cpool (toIndex rest)
+                         nar              = length $ descriptorIndices $ snd mID     
+                         ~(obj : argsrem) = stk
+                         args             = take nar argsrem
+                         rest             = drop nar argsrem
+                         par              = filter isParamRef (obj : args) -- parameters of this function sent in as parameter to that function 
+                         mty              = mDB !? mID
+                     in  if isNothing mty
+                         then exitWith UnanalyzableMethod
+                         else do
+                                let mt = fromJust mty
+                                if | mt == Impure       -> exitWith Impure
+                                   | mt == Local        -> do
+                                                                setStackPos j rest      -- local methods return void, so no change to stack
+                                                                mapM_ (addMut j) $ map unParamRef par   -- modified params changed
+                                   | mt == StrongImpure -> exitWith StrongImpure
+                                   | mt == UnanalyzableMethod -> exitWith UnanalyzableMethod
+                                   | _                  -> setStackPos j rest
+                        
+
+                                                                
+
+
                 return $ undefined
+
+
+data ObjectField = OFBasic | OFBasicLong | OFReference | OFUnknown deriving (Show, Eq)
+
+isCat2 :: StackObject -> Bool
+isCat2 SBasicLong = True
+isCat2 _          = False      
+
+unParamRef :: StackObject -> Int
+unParamRef (SReference x) = x
+unParamRef _              = error "unParamRef called on non SReference type"
+
+isParamRef :: StackObject -> Maybe Int
+isParamRef (SReference x) = Just x
+isParamRef _              = Nothing      
+
+getSTypeOfConstantWord8 :: [Word8] -> [ConstantInfo] -> ObjectField
+getSTypeOfConstantWord8 rest cpool =    let idx = toIndex rest
+                                            vp  = constantType $ cpool !! idx
+                                        in  case constantType of 
+                                                CClass          -> OFReference
+                                                CInteger        -> OFBasic
+                                                CLong           -> OFBasicLong
+                                                CFloat          -> OFBasic
+                                                CString         -> OFReference
+                                                CDouble         -> OFBasicLong
+                                                _               -> OFUnknown
+
+isFinalStaticFieldWord8 :: [Word8] -> [ConstantInfo] -> FieldDB -> Maybe Bool
+isFinalStaticFieldWord8 rest cpool fdb =        let idx = toIndex rest
+                                                    fID = getFieldName cpool idx
+                                                    fty = fdb !? fID
+                                                in  if isJust fty 
+                                                    then Just $ fromJust fty == FinalStatic
+                                                    else Nothing
+
+getSTypeOfFieldWord8 :: [Word8] -> [ConstantInfo] -> ObjectField
+getSTypeOfFieldWord8 rest cpool = getSTypeOfField (toIndex rest) cpool
+
+getSTypeOfField :: Int -> [ConstantInfo] -> ObjectField
+getSTypeOfField idx cpool = let des = head $ snd $ getFieldName cpool idx
+                            in  if      | des `elem` ['B', 'C', 'F', 'I', 'S', 'Z']     -> OFBasic
+                                        | des `elem` ['D', 'J']                         -> OFBasicLong
+                                        | des `elem` ['L', '[']                         -> OFReference
+                                        | _                                             -> error $ "Invalid Field Type of character " ++ show des
