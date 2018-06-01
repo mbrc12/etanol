@@ -28,6 +28,9 @@ import Etanol.MonadFX
 type NamePrefix = String -- prefixes of strings, anynames
 type AnyName    = String
 
+-- unq returns the unique elements of the list, provided they are orderable
+unq = map head . group . sort
+
 initialStrongImpureList :: [NamePrefix] 
 initialStrongImpureList = ["java.io", "java.net", "javax.swing", 
                            "java.awt", "java.nio", "java.sql", 
@@ -38,6 +41,41 @@ isInitialStrongImpure :: AnyName -> Bool
 isInitialStrongImpure namae = namae `elem` initialStrongImpureList
 
 getFieldOp, putFieldOp, invokeStaticOp, invokeSpecialOp, invokeVirtualOp, invokeInterfaceOp, invokeDynamicOp :: Word8
+newOp, newArrayOp, monitorEnterOp, monitorExitOp, aThrowOp, ldcOp, ldc_wOp, checkCastOp :: Word8
+multianewArrayOp, popOp, pop2Op, dupOp, dup_x1Op, dup_x2Op, dup2Op, dup2_x1Op, dup2_x2Op, swapOp :: Word8
+aaloadOp, iastoreOp, lastoreOp, fastoreOp, dastoreOp, aastoreOp, bastoreOp, castoreOp, sastoreOp :: Word8
+areturnOp, wideOp :: Word8
+
+areturnOp = 176
+wideOp = 196
+newOp = 187
+aconstNullOp = 1
+newArrayOp = 188
+anewArrayOp = 189
+multianewArrayOp = 197
+aThrowOp   = 191
+monitorEnterOp = 194
+monitorExitOp = 195
+ldcOp = 18
+ldc_wOp = 19
+popOp = 87
+pop2Op = 88
+dupOp = 89
+dup_x1Op = 90
+dup_x2Op = 91
+dup2Op = 92
+dup2_x1Op = 93
+dup2_x2Op = 94
+swapOp = 95 
+aaloadOp = 50
+iastoreOp = 79
+lastoreOp = 80
+fastoreOp = 81
+dastoreOp = 82
+aastoreOp = 83
+bastoreOp = 84
+castoreOp = 85
+sastoreOp = 86
 getFieldOp = 180
 putFieldOp = 181
 invokeVirtualOp = 182
@@ -45,6 +83,8 @@ invokeSpecialOp = 183
 invokeStaticOp= 184
 invokeInterfaceOp = 185
 invokeDynamicOp = 186
+checkCastOp = 192
+
 -- When reading an index from the bytecode into the constantPool, decrement it by 1, as is done here
 -- using pred
 toIndex :: [Word8] -> Word32
@@ -182,8 +222,9 @@ analyseMethod ::        [ConstantInfo] ->
                         (LoadedThingsStatus, FieldDB, MethodDB)
 analyseMethod cpool loadedThings loadedThingsStatus fDB mDB thing =
         let     mID = methodID thing
+                mDes  = snd mID
                 mData = methodData (loadedThings ! thing)
-                (_, mCode, _, af) = mData
+                (_, mCode, mCFG, af) = mData
                 deps = dependencies cpool mCode
                 mDeps = filter isMethod deps    -- :: [AnyID]
                 fDeps = filter isField deps     -- :: [AnyID]
@@ -193,7 +234,7 @@ analyseMethod cpool loadedThings loadedThingsStatus fDB mDB thing =
                 nA  = filter (\x -> M.notMember x loadedThings) nAl 
                         -- not previously analyzed and also not loaded, but required for analysis
                         --
-         in     if (AMNative `elem` af || AMSynchronized `elem` af || AMVarargs `elem` af)    -- These identifiers enable immediate disqualification
+        in      if (AMNative `elem` af || AMSynchronized `elem` af || AMVarargs `elem` af)    -- These identifiers enable immediate disqualification
                 then (loadedThingsStatus, fDB, M.insert mID UnanalyzableMethod mDB)
                 else    if nonEmpty nA
                         then (loadedThingsStatus, fDB, M.insert mID UnanalyzableMethod mDB)
@@ -201,9 +242,18 @@ analyseMethod cpool loadedThings loadedThingsStatus fDB mDB thing =
                                         -- after this all deps of this method is not in loadedThingsStatus, as they have all been analyzed
                                         -- recursively. So we can now safely analyse this method itself
                                         -- But it may happen that this method itself got into a loop and was analyzed already
-                             in         if M.member thing loadedThingsStatus' 
-                                        then let verdict  = verdictifyMethod cpool fDB mDB mData
-                                             in  (loadedThingsStatus', fDB', M.insert mID verdict mDB')
+                             in         if M.member thing loadedThingsStatus'
+                                        then let  desidx = descriptorIndices2 $ mDes
+                                                  initialHeap = M.fromList desidx
+                                                  lhp = [initialHeap]
+                                                  initialState = AnalysisBundle cpool mDB fDB mCFG lhp [[]] [theStart] [[]]
+                                                  (finalState, verdict) = resultant getAnalysis initialState
+                                                  fDB'  = fieldDB finalState
+                                                  mDB'  = methodDB finalState 
+                                                  mut  =  unq $ concat (muts finalState)
+                                                  -- if atleast one path mutates a parameter, the pure becomes local
+                                                  fin  =  if verdict == Pure && (not $ null mut) then Local else verdict
+                                             in  (loadedThingsStatus', fDB', M.insert mID fin mDB')
                                         else (loadedThingsStatus', fDB', mDB')
 
 -- analyze method for type when all its dependencies are met
@@ -222,7 +272,7 @@ analyseMethod cpool loadedThings loadedThingsStatus fDB mDB thing =
 -- the same currently.
 -- --------------------------------------------------------------------
 
-
+{--
 data MutationType = BasicMutation | ObjectMutation      -- type of mutation, basic mutation if only basic fields are mutated 
                         deriving (Show, Eq, Ord)
 
@@ -260,6 +310,7 @@ getStaticFields cpool ((_, (op : rest)) : restcode)
 -- | Get all mutations done to passed parameters in code
 getMutations :: [ConstantInfo] -> MethodDB -> CFG -> [Mutation]
 getMutations cpool mDB cfg = undefined --stepThrough cpool mDB cfg theStart
+--}
 
 data StackObject = SBasic | SBasicLong | SReference Int | SReferenceFresh | SObjArrayReference
                         deriving (Eq, Show)
@@ -306,9 +357,9 @@ nonBasicop (1, 1) = [193, 190]
 nonBasicop (1, 0) = [198, 199, 176, 58]
 nonBasicop (2, 0) = [165, 166]
 nonBasicop (2, 1) = [46, 48, 51, 52, 53]
-nonBasicOp (2, 2) = []
+nonBasicop (2, 2) = []
 
-nonBasicOpL (2, 1) = [47, 49]
+nonBasicopL (2, 1) = [47, 49]
 
 definedAtNonBasic :: [(Int, Int)]
 definedAtNonBasic = [(1, 1), (1, 0), (2, 0), (2, 1), (2, 2)]
@@ -329,8 +380,8 @@ type MutLocs = [Int]
 
 data AnalysisBundle = AnalysisBundle {
                         cpool   :: [ConstantInfo],
-                        mDB     :: MethodDB,
-                        fDB     :: FieldDB,
+                        methodDB:: MethodDB,
+                        fieldDB :: FieldDB,
                         cfg     :: CFG,
                         lHeaps  :: LocalHeaps,
                         stacks  :: Stacks,                              
@@ -343,10 +394,10 @@ getCpool :: AnalysisM [ConstantInfo]
 getCpool = pure cpool <*> getS
 
 getMDB :: AnalysisM MethodDB
-getMDB = pure mDB <*> getS
+getMDB = pure methodDB <*> getS
 
 getFDB :: AnalysisM FieldDB
-getFDB = pure fDB <*> getS
+getFDB = pure fieldDB <*> getS
 
 getCfg :: AnalysisM CFG
 getCfg = pure cfg <*> getS
@@ -409,7 +460,7 @@ localHeapOperate loc pos obj = M.insert pos obj loc
 getMuts :: AnalysisM [MutLocs]
 getMuts = pure muts <*> getS
 
-setMuts :: [MutLoc] -> AnalysisM ()
+setMuts :: [MutLocs] -> AnalysisM ()
 setMuts ms = do
                 AnalysisBundle a b c d e f g _ <- getS
                 putS $ AnalysisBundle a b c d e f g ms
@@ -429,7 +480,7 @@ consumeCode = do
                 loc <- getLocalHeaps
                 mut <- getMuts
 
-                let q = concatMap (\(l, s, c, m) -> zip3 (repeat l) (repeat s) (suc g c) (repeat m)) $ zip4 loc stk p mut
+                let q = concatMap (\(l, s, c, m) -> zip4 (repeat l) (repeat s) (suc g c) (repeat m)) $ zip4 loc stk p mut
                 let np = map thirdof4 q
 
                 setCPos np
@@ -494,54 +545,30 @@ If it assigns Reference type fields to any object/array (fresh or parameter), it
 Otherwise it can be impure, local or pure.
 Suppose basic fields are assigned to some parameters.
 If any parameter other than 0 are assigned then it is impure (0 == this)
-If only 0 is assigned it is local, additionally local methods must return **void**.
+If only 0 is assigned it is local.
 Otherwise it is pure.
+
+Local and pure method may only return Fresh References or BasicTypes otherwise, they become pure, see (*****)
+
+Also if pure functions return references, they must be fresh and not any of the referenced params
 --}
-
-newOp, newArrayOp, getFieldOp, putFieldOp, monitorEnterOp, monitorExitOp, aThrowOp, ldcOp, ldc_wOp :: Word8
-multianewArrayOp, popOp, pop2Op, dupOp, dup_x1Op, dup_x2Op, dup2Op, dup2_x1Op, dup2_x2Op, swapOp :: Word8
-aaloadOp, iastoreOp, lastoreOp, fastoreOp, dastoreOp, aastoreOp, bastoreOp, castoreOp, sastoreOp :: Word8
-
-newOp = 187
-aconstNullOp = 1
-newArrayOp = 188
-anewArrayOp = 189
-multianewArrayOp = 197
-getFieldOp = 180
-putFieldOp = 181
-aThrowOp   = 191
-monitorEnterOp = 194
-monitorExitOp = 195
-ldcOp = 18
-ldc_wOp = 19
-popOp = 87
-pop2Op = 88
-dupOp = 89
-dup_x1Op = 90
-dup_x2Op = 91
-dup2Op = 92
-dup2_x1Op = 93
-dup2_x2Op = 94
-swapOp = 95 
-aaloadOp = 50
-iastoreOp = 79
-lastoreOp = 80
-fastoreOp = 81
-dastoreOp = 82
-aastoreOp = 83
-bastoreOp = 84
-castoreOp = 85
-sastoreOp = 86
 
 analyseAtom :: Int -> CodeAtom -> LocalHeap -> Stack -> AnalysisM MethodType
 analyseAtom j (pos, ca@(op : rest)) loc stk = 
         do
                 whenExit (op == monitorEnterOp || op == monitorExitOp || op == invokeInterfaceOp || op == invokeDynamicOp) UnanalyzableMethod
-                whenExit (op == aThrowOp) StrongImpure
                 
+                -- NOTE : The below restriction is totally lame, is due to the laziness of the author. Will be fixed asap.
+                whenExit (op == wideOp) UnanalyzableMethod
+
+                whenExit (op == aThrowOp) StrongImpure
+                 
                 cpool <- getCpool
                 fDB   <- getFDB 
                 mDB   <- getMDB
+                
+                -- (*****) - reference from above comment
+                whenExit (op == areturnOp && (isJust $ isParamRef $ head stk)) Impure        -- returns a reference to something passed in as an argument
 
                 if op `elem` loads
                 then let idx = getIdxOp ca
@@ -584,7 +611,7 @@ analyseAtom j (pos, ca@(op : rest)) loc stk =
                 else    return ()
 
 
-                whenExit (elem op $ basicopAll ++ nonBasicopAll ++ loads ++ stores) Pure
+                
                 
                 {- Following this point, everything deals with operands specifically. See the brief spec above. -}
 
@@ -601,13 +628,14 @@ analyseAtom j (pos, ca@(op : rest)) loc stk =
                 -- in favour of fully monadic processing.
 
                 whenExit ((op == getStatic || op == putStatic) && getSTypeOfFieldWord8 rest cpool == OFReference) Impure
-                whenExit ((op == getStatic || op == putStatic) && (not $ isFinalStaticFieldWord8 rest cpool fDB)) Impure
+                whenExit ((op == getStatic || op == putStatic) && (isNothing $ isFinalStaticFieldWord8 rest cpool fDB)) UnanalyzableMethod
+                whenExit ((op == getStatic || op == putStatic) && (not $ isFinalStaticFieldWord8MaybeStripped rest cpool fDB)) Impure
                 
                 when (op == getStatic) $ do
                         let ty = getSTypeOfConstantWord8 rest cpool
                         if  | ty == OFBasic     -> setStackPos j (SBasic : stk)
                             | ty == OFBasicLong -> setStackPos j (SBasicLong : stk)
-                            | _                 -> error "Unexpected exception. getStatic does not expect a Reference"
+                            | otherwise         -> error "Unexpected exception. getStatic does not expect a Reference"
 
                 when (op == putStatic) $ error "putStatic not expected!"
 
@@ -615,21 +643,21 @@ analyseAtom j (pos, ca@(op : rest)) loc stk =
                         let ftype    = getSTypeOfFieldWord8 rest cpool
                             topelem  = head stk
                             rstk     = tail stk
-                        in      if ftype == OFBasic 
-                                then setStackPos j (SBasic : rstk) 
-                                else setStackPos j (topelem : rstk)     -- topelem ==    SReferenceFresh then this is also fresh reference
+                        if ftype == OFBasic 
+                        then setStackPos j (SBasic : rstk) 
+                        else setStackPos j (topelem : rstk)     -- topelem ==    SReferenceFresh then this is also fresh reference
                                                                         --               SReference Int then this is also int SReference
                 when (op == putFieldOp) $ do
                         let ftype    = getSTypeOfFieldWord8 rest cpool
                             obj      = head stk    
-                        in      if ftype == OFReference
-                                then exitWith Impure
-                                else do
-                                       setStackPos j $ stackOperate stk (2, 0)
-                                       let ty = isParamRef obj
-                                       if isJust ty
-                                       then addMut j $ fromJust ty              -- add to parameter mutations
-                                       else return ()                           -- else modifies fresh param
+                        if ftype == OFReference
+                        then exitWith Impure
+                        else do
+                                setStackPos j $ stackOperate stk (2, 0)
+                                let ty = isParamRef obj
+                                if isJust ty
+                                then addMut j $ fromJust ty              -- add to parameter mutations
+                                else return ()                           -- else modifies fresh param
 
                 
                 {- Analysis for the whole suite of pops, dups and also swap -}
@@ -679,7 +707,7 @@ analyseAtom j (pos, ca@(op : rest)) loc stk =
                         
                 {- dups, swaps, pops complete -}
                         
-                when (op == checkCast) $ return ()
+                when (op == checkCastOp) $ return ()
 
                 when (op == ldcOp || op == ldc_wOp) $ do
                         let ftype = getSTypeOfConstantWord8 rest cpool
@@ -692,7 +720,7 @@ analyseAtom j (pos, ca@(op : rest)) loc stk =
                         let ~(_ : (e1 : rest)) = stk
                         
                         if | e1 == SReferenceFresh      -> setStackPos j $ (SReferenceFresh : rest)
-                           | _                          -> setStackPos j $ (e1 : rest)
+                           | otherwise                  -> setStackPos j $ (e1 : rest)
                         
                 when (op == iastoreOp || op == fastoreOp || op == lastoreOp || op == dastoreOp) $ do
                         let ~(_ : (_ : (e1 : rest))) = stk
@@ -709,34 +737,93 @@ analyseAtom j (pos, ca@(op : rest)) loc stk =
                         then exitWith Impure
                         else return ()
                 
-                when (op == invokeVirtualOp) $ do
-                     let mID              = getMethodName cpool (toIndex rest)
-                         nar              = length $ descriptorIndices $ snd mID     
+                when (op == invokeVirtualOp || op == invokeSpecialOp) $ do
+                     let mID              = getMethodName cpool (fromIntegral $ toIndex rest)
+                         nar              = length $ descriptorIndices $ snd mID
                          ~(obj : argsrem) = stk
                          args             = take nar argsrem
-                         rest             = drop nar argsrem
-                         par              = filter isParamRef (obj : args) -- parameters of this function sent in as parameter to that function 
+                         oth              = drop nar argsrem
+                         par              = filter (isJust . isParamRef) (obj : args) -- parameters of this function sent in as parameter to that function 
                          mty              = mDB !? mID
-                     in  if isNothing mty
-                         then exitWith UnanalyzableMethod
-                         else do
+                     if isNothing mty
+                     then exitWith UnanalyzableMethod
+                     else do
                                 let mt = fromJust mty
                                 if | mt == Impure       -> exitWith Impure
                                    | mt == Local        -> do
-                                                                setStackPos j rest      -- local methods return void, so no change to stack
-                                                                mapM_ (addMut j) $ map unParamRef par   -- modified params changed
+                                                               let retty = getReturnType mID
+                                                               if | retty == RTReference        -> setStackPos j $ SReferenceFresh : oth 
+                                                                  | retty == RTBasic            -> setStackPos j $ SBasic : oth
+                                                                  | retty == RTBasicLong        -> setStackPos j $ SBasicLong : oth
+                                                                  | retty == RTVoid             -> setStackPos j $ oth
+                                                                  | otherwise                   -> error "Unknown return type from method!"
+
+                                                               mapM_ (addMut j) $ map unParamRef par   -- modified params changed
+
                                    | mt == StrongImpure -> exitWith StrongImpure
                                    | mt == UnanalyzableMethod -> exitWith UnanalyzableMethod
-                                   | _                  -> setStackPos j rest
-                        
-
+                                   | otherwise          -> let retty = getReturnType mID
+                                                           in  if | retty == RTReference        -> setStackPos j $ SReferenceFresh : oth -- pure returns fresh ref
+                                                                  | retty == RTBasic            -> setStackPos j $ SBasic : oth
+                                                                  | retty == RTBasicLong        -> setStackPos j $ SBasicLong : oth
+                                                                  | retty == RTVoid             -> setStackPos j $ oth
+                                                                  | otherwise                   -> error "Unknown return type from method!"
+                                                                  
                                                                 
+                        
+                when (op == invokeStaticOp) $ do
+                     let mID              = getMethodName cpool (fromIntegral $ toIndex rest)
+                         nar              = length $ descriptorIndices $ snd mID     
+                         argsrem          = stk
+                         args             = take nar argsrem
+                         oth              = drop nar argsrem
+                         par              = filter (isJust . isParamRef) args -- parameters of this function sent in as parameter to that function 
+                         mty              = mDB !? mID
+                     if isNothing mty
+                     then exitWith UnanalyzableMethod
+                     else do
+                                let mt = fromJust mty
+                                if | mt == Impure       -> exitWith Impure
+                                   | mt == Local        -> do
+                                                               let retty = getReturnType mID
+                                                               if | retty == RTReference        -> setStackPos j $ SReferenceFresh : oth 
+                                                                  | retty == RTBasic            -> setStackPos j $ SBasic : oth
+                                                                  | retty == RTBasicLong        -> setStackPos j $ SBasicLong : oth
+                                                                  | retty == RTVoid             -> setStackPos j $ oth
+                                                                  | otherwise                   -> error "Unknown return type from method!"
 
-
-                return $ undefined
+                                                               mapM_ (addMut j) $ map unParamRef par   -- modified params changed
+ 
+                                   | mt == StrongImpure -> exitWith StrongImpure
+                                   | mt == UnanalyzableMethod -> exitWith UnanalyzableMethod
+                                   | otherwise          -> let retty = getReturnType mID
+                                                           in  if | retty == RTReference        -> setStackPos j $ SReferenceFresh : oth -- pure returns fresh ref
+                                                                  | retty == RTBasic            -> setStackPos j $ SBasic : oth
+                                                                  | retty == RTBasicLong        -> setStackPos j $ SBasicLong : oth
+                                                                  | retty == RTVoid             -> setStackPos j oth
+                                                                  | otherwise                   -> error "Unknown return type from method!"
+                                 
+                                                                
+                return Pure
 
 
 data ObjectField = OFBasic | OFBasicLong | OFReference | OFUnknown deriving (Show, Eq)
+data ReturnType  = RTBasic | RTBasicLong | RTReference | RTVoid  deriving (Show, Eq)
+
+basicList, longList, refList, voidElem :: [Char]
+basicList = "BCFISZ"
+longList  = "DJ"
+refList   = "L["
+voidElem  = "V"
+
+getReturnType :: MethodID -> ReturnType
+getReturnType (_, des) = let ret = reverse $ takeWhile (/= ')') $ reverse des
+                             fc  = head ret
+                         in if | fc `elem` basicList    -> RTBasic
+                               | fc `elem` longList     -> RTBasicLong
+                               | fc `elem` refList      -> RTReference
+                               | fc `elem` voidElem     -> RTVoid
+                               | otherwise              -> error $ "Unknown return type for method with descriptor : " ++ show des
 
 isCat2 :: StackObject -> Bool
 isCat2 SBasicLong = True
@@ -751,9 +838,9 @@ isParamRef (SReference x) = Just x
 isParamRef _              = Nothing      
 
 getSTypeOfConstantWord8 :: [Word8] -> [ConstantInfo] -> ObjectField
-getSTypeOfConstantWord8 rest cpool =    let idx = toIndex rest
-                                            vp  = constantType $ cpool !! idx
-                                        in  case constantType of 
+getSTypeOfConstantWord8 rest cpool =    let idx = fromIntegral $ toIndex rest
+                                            vp  = constType $ cpool !@ idx
+                                        in  case vp of 
                                                 CClass          -> OFReference
                                                 CInteger        -> OFBasic
                                                 CLong           -> OFBasicLong
@@ -762,20 +849,44 @@ getSTypeOfConstantWord8 rest cpool =    let idx = toIndex rest
                                                 CDouble         -> OFBasicLong
                                                 _               -> OFUnknown
 
+isFinalStaticFieldWord8MaybeStripped :: [Word8] -> [ConstantInfo] -> FieldDB -> Bool
+isFinalStaticFieldWord8MaybeStripped a b c = (\m -> if isJust m then fromJust m else False) $ isFinalStaticFieldWord8 a b c
+
 isFinalStaticFieldWord8 :: [Word8] -> [ConstantInfo] -> FieldDB -> Maybe Bool
 isFinalStaticFieldWord8 rest cpool fdb =        let idx = toIndex rest
-                                                    fID = getFieldName cpool idx
+                                                    fID = getFieldName cpool (fromIntegral idx)
                                                     fty = fdb !? fID
                                                 in  if isJust fty 
                                                     then Just $ fromJust fty == FinalStatic
                                                     else Nothing
 
 getSTypeOfFieldWord8 :: [Word8] -> [ConstantInfo] -> ObjectField
-getSTypeOfFieldWord8 rest cpool = getSTypeOfField (toIndex rest) cpool
+getSTypeOfFieldWord8 rest cpool = getSTypeOfField (fromIntegral $ toIndex rest) cpool
 
 getSTypeOfField :: Int -> [ConstantInfo] -> ObjectField
 getSTypeOfField idx cpool = let des = head $ snd $ getFieldName cpool idx
-                            in  if      | des `elem` ['B', 'C', 'F', 'I', 'S', 'Z']     -> OFBasic
-                                        | des `elem` ['D', 'J']                         -> OFBasicLong
-                                        | des `elem` ['L', '[']                         -> OFReference
-                                        | _                                             -> error $ "Invalid Field Type of character " ++ show des
+                            in  if      | des `elem` basicList                  -> OFBasic
+                                        | des `elem` longList                   -> OFBasicLong
+                                        | des `elem` refList                    -> OFReference
+                                        | otherwise                             -> error $ "Invalid Field Type of character " ++ show des
+
+descriptorIndices2 :: String -> [(Int, StackObject)]
+descriptorIndices2 descriptor = recursiveCalc desc2 1
+                                where
+                                        desc2 = takeWhile (')' /=) $ drop 1 descriptor          -- Convert (xxx)yyy -> xxx
+                                        
+                                        recursiveCalc :: String -> Int -> [(Int, StackObject)]
+                                        recursiveCalc ("") x = []
+                                        recursiveCalc (c:left) x = if c `elem` (basicList ++ longList)
+                                                                    then if c `elem` longList
+                                                                            then (x, SBasicLong) : recursiveCalc left (x + 2)
+                                                                            else (x, SBasic) : recursiveCalc left (x + 1)
+                                                                    else if c == 'L'
+                                                                            then (x, SReference x) : recursiveCalc (drop 1 $ dropWhile (';' /=) left) (x + 1)
+                                                                            else if c == '['
+                                                                                    then let arrTypeAnd = dropWhile ('[' ==) left
+                                                                                             arrType    = head arrTypeAnd
+                                                                                         in if arrType == 'L'  
+                                                                                               then (x, SReference x) : recursiveCalc (drop 1 $ dropWhile (';' /=) arrTypeAnd) (x + 1)
+                                                                                               else (x, SReference x) : recursiveCalc (drop 1 arrTypeAnd) (x + 1)
+                                                                                    else []
