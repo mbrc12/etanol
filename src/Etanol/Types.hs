@@ -31,6 +31,7 @@ import System.FilePath.Posix ((</>))
 import System.Directory (doesFileExist)
 import System.Exit (die)
 import qualified Data.ByteString as B
+import Debug.Trace (trace)
 
 import ByteCodeParser.BasicTypes hiding (ClassName)
 import ByteCodeParser.Reader
@@ -170,7 +171,8 @@ getMethod className methodInfo = let methodName :: String = adjoinClassName clas
                                      methodCode :: [CodeAtom] = findCodeAttribute $ attributes (methodInfo :: MethodInfo)
                                      methodCFG = generateControlFlowGraph methodCode
                                      methodAccessFlags = accessFlags (methodInfo :: MethodInfo)
-                                 in ((methodName, methodDescriptor), methodCode, methodCFG, methodAccessFlags)
+                                 in trace ("Reading method: " ++ methodName) $ 
+                                        ((methodName, methodDescriptor), methodCode, methodCFG, methodAccessFlags)
 
 
 toMethodID :: NamedMethodCode -> MethodID
@@ -191,7 +193,7 @@ getField :: ClassName -> FieldInfo -> NamedField
 getField className fieldInfo = let fieldName :: String = adjoinClassName className $ name (fieldInfo :: FieldInfo)
                                    fieldDesc :: String = descriptor (fieldInfo :: FieldInfo)
                                    fieldAccessFlags  = accessFlags (fieldInfo :: FieldInfo)    
-                               in ((fieldName, fieldDesc), fieldAccessFlags)
+                               in trace ("Reading field: " ++ fieldName) $ ((fieldName, fieldDesc), fieldAccessFlags)
 
 getFields :: RawClassFile -> [NamedField]
 getFields cf = map (getField className) flds

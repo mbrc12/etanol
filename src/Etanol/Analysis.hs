@@ -36,6 +36,9 @@ type AnyName    = String
 tHRESHOLD :: Int
 tHRESHOLD = 50
 
+traceM :: (Monad m, Show a) => a -> m ()
+traceM x = trace (show x) $ return ()
+
 -- unq returns the unique elements of the list, provided they are orderable
 unq = map head . group . sort
 
@@ -114,8 +117,12 @@ uniques =  map head . group . sort
 
 data AnyID =    EFieldID { fieldID :: FieldID } |
                 EMethodID { methodID :: MethodID }
-                deriving (Show, Eq, Ord)
+                deriving (Eq, Ord)
 
+instance Show AnyID where
+        show (EFieldID f) = "field " ++ fst f ++ ":" ++ snd f
+        show (EMethodID m) = "method " ++ fst m ++ ":" ++ snd m
+        
 data AnyData =  EFieldData { fieldData :: NamedField } |
                 EMethodData { methodData :: NamedMethodCode }
                 deriving (Show, Eq)
@@ -186,7 +193,8 @@ analyseAll cmap loadedThings loadedThingsStatus fDB mDB =
         else    let (thing, _) = M.elemAt 0 loadedThingsStatus
                     cpool = getConstantPoolForThing cmap thing
                     (loadedThingsStatus', fDB', mDB') = analysisDriver cpool loadedThings loadedThingsStatus fDB mDB thing
-                in  analyseAll cmap loadedThings loadedThingsStatus' fDB' mDB'     
+                in  trace ("LoadedThingsStatus: " ++ (show $ M.size loadedThingsStatus)) $ 
+                        analyseAll cmap loadedThings loadedThingsStatus' fDB' mDB'     
 
 -- assumes thing to be in loadedThings
 analysisDriver ::       [ConstantInfo]  -> 
@@ -215,6 +223,7 @@ analysisDriver cpool loadedThings loadedThingsStatus fDB mDB thing = -- thing is
 
 
 isBasic :: FieldDescriptor -> Bool
+isBasic "" = error "Empty field descriptor!"
 isBasic s = (head s) `elem` ['B', 'C', 'D', 'F', 'I', 'J', 'S', 'Z'] 
 
 -- checks if it is final static or basic type atm, assumes AnyID is a isField
@@ -371,8 +380,7 @@ basicopL (1, 1) = [133, 135, 140, 141, 138, 143, 117, 119]
 
 
 definedAtBasic :: [(Int, Int)]
-definedAtBasic = [(2, 1), (0, 0), (0, 1), (1, 0), (1, 1), (0, 2), (2, 0), (4, 2),
-                (2, 2), (1, 2), (4, 1)]
+definedAtBasic = [(2, 1), (0, 0), (0, 1), (1, 0), (1, 1), (0, 2), (2, 0), (4, 2), (2, 2), (1, 2), (4, 1)]
 definedAtBasicL :: [(Int, Int)]
 definedAtBasicL = [(0, 1), (1, 0), (2, 1), (1, 1)]
 
@@ -524,13 +532,15 @@ getAnalysis :: AnalysisM MethodType
 getAnalysis = do
                 cas   <- consumeCode
                 pos   <- getCPos
-
+                
                 whenExit (null pos) Pure
 
                 stks <- getStacks
                 locs <- getLocalHeaps
                 
                 results <- forM [0..length cas - 1] $ \j -> exceptify $ analyseAtom j (cas !! j) (locs !! j) (stks !! j)
+        
+                traceM "Outta there"
         
                 whenExit (length results > tHRESHOLD) UnanalyzableMethod
         
@@ -550,7 +560,7 @@ loads2 = [21 .. 45] \\ loads1
 loadsi = [21..25]               -- indexed
 loads = loads1 ++ loads2 ++ loadsi
 stores1 = [54, 56, 58] ++ [59..62] ++ [67..70] ++ [75..78]
-stores2 = [54..78] \\ stores2
+stores2 = [54..78] \\ stores1
 storesi = [54..58]              -- indexed
 stores = stores1 ++ stores2 ++ storesi
 
@@ -586,6 +596,7 @@ Also if pure functions return references, they must be fresh and not any of the 
 --}
 
 analyseAtom :: Int -> CodeAtom -> LocalHeap -> Stack -> AnalysisM MethodType
+analyseAtom j (pos, []) loc stk = return Pure
 analyseAtom j (pos, ca@(op : rest)) loc stk = 
         do
                 whenExit (op == monitorEnterOp || op == monitorExitOp || op == invokeInterfaceOp || op == invokeDynamicOp) UnanalyzableMethod
@@ -598,6 +609,8 @@ analyseAtom j (pos, ca@(op : rest)) loc stk =
                 cpool <- getCpool
                 fDB   <- getFDB 
                 mDB   <- getMDB
+                
+                traceM "Inna here"
                 
                 -- (*****) - reference from above comment
                 whenExit (op == areturnOp && (isJust $ isParamRef $ head stk)) Impure        -- returns a reference to something passed in as an argument
@@ -620,7 +633,6 @@ analyseAtom j (pos, ca@(op : rest)) loc stk =
                                         setLocalHeapPos j $ localHeapOperate loc idx elm
                                         setStackPos j     $ stackOperateL stk (1, 0)  -- remove 1 only, but now elm is SBasicLong
 
-                 
                 
                 if elem op $ basicopAll \\ (loads ++ stores)            -- do everything basic that does not involve the local heap
                 then    let tup = head $ filter (\t -> op `elem` basicop t) definedAtBasic
@@ -636,14 +648,11 @@ analyseAtom j (pos, ca@(op : rest)) loc stk =
                 then    let tup = head $ filter (\t -> op `elem` nonBasicop t) definedAtNonBasic
                         in  setStackPos j $ stackOperate stk tup
                 else    return ()
-                
+                                
                 if elem op $ nonBasicopLAll \\ (loads ++ stores)            -- see defn for nonBasicop; special for long ops
                 then    let tup = head $ filter (\t -> op `elem` nonBasicopL t) definedAtNonBasicL
                         in  setStackPos j $ stackOperateL stk tup
                 else    return ()
-
-
-                
                 
                 {- Following this point, everything deals with operands specifically. See the brief spec above. -}
 

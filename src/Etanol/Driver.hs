@@ -110,10 +110,10 @@ driver config path = do
         let rcs = map (\rc -> if isLeft rc 
                                 then error ("ERROR : " ++ show rc)
                                 else fromRight undefined rc) rcf
-        
+                
             mthds = concatMap getMethods rcs                 
             flds  = concatMap getFields  rcs    
-
+            
             cnames = map thisClass rcs
             cps    = map constantPool rcs
             
@@ -131,7 +131,12 @@ driver config path = do
             lst   = M.fromList loadedStatus
             
             (_, ffDB, fmDB) = analyseAll cmap ltm lst ifDB imDB
-            
+        
+        putStrLn "Saving databases.."
+        saveFieldDB config ffDB
+        saveMethodDB config fmDB
+        putStrLn "Completed."
+        
         return (ffDB, fmDB)    
         
 startpoint :: FilePath -> IO (FieldDB, MethodDB)
