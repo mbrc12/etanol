@@ -1,7 +1,12 @@
 {-# LANGUAGE DuplicateRecordFields, OverloadedStrings, MultiWayIf #-}
 
 module Etanol.Analysis (
-                isFinalStaticField, dependencies, AnyID(..), uniques
+                isFinalStaticField, dependencies, AnyID(..), uniques, CPoolMap(..),
+                analyseAll, AnyData(..), LoadedThings(..), LoadedThingsStatus(..),
+                StackObject(..), ReturnType(..), ObjectField(..), Stack(..),
+                Stacks(..), MutLocs(..), LocalHeap(..), LocalHeaps(..), Status(..),
+                AnyName(..), NamePrefix(..), initialStrongImpureList, tHRESHOLD,
+                isInitialStrongImpure
         ) where
 
 -- update what is being imported
@@ -27,6 +32,9 @@ import Etanol.MonadFX
 
 type NamePrefix = String -- prefixes of strings, anynames
 type AnyName    = String
+
+tHRESHOLD :: Int
+tHRESHOLD = 50
 
 -- unq returns the unique elements of the list, provided they are orderable
 unq = map head . group . sort
@@ -149,19 +157,36 @@ type LoadedThingsStatus = M.Map AnyID Status
 nonEmpty :: [a] -> Bool
 nonEmpty = not . null
 
+type CPoolMap = M.Map ClassName [ConstantInfo] 
+
+getConstantPoolForThing :: CPoolMap -> AnyID -> [ConstantInfo]
+getConstantPoolForThing cmap thing = if isNothing result 
+                                        then error "Constant Pool does not exist!"
+                                        else fromJust result
+                                where
+                                        toName :: AnyID -> AnyName
+                                        toName (EFieldID f) = fst f
+                                        toName (EMethodID m) = fst m
+                                        
+                                        cn = getClassName $ toName thing
+                                        
+                                        result = cmap !? cn
+
 -- functions for analysis
 
--- | analyseAll is the main entry point for analysis
-analyseAll ::           [ConstantInfo]  -> 
+-- | analyseAll is the main entry point for analysis.
+-- | Note that by implementation, analyseAll must always return (empty map, _, _).
+analyseAll ::           CPoolMap  -> 
                         LoadedThings    -> 
                         LoadedThingsStatus ->
                         FieldDB        -> MethodDB              ->                    -- old  
                         (LoadedThingsStatus, FieldDB, MethodDB)                       -- new values
-analyseAll cpool loadedThings loadedThingsStatus fDB mDB =
+analyseAll cmap loadedThings loadedThingsStatus fDB mDB =
         if M.null loadedThingsStatus then (loadedThingsStatus, fDB, mDB)
         else    let (thing, _) = M.elemAt 0 loadedThingsStatus
+                    cpool = getConstantPoolForThing cmap thing
                     (loadedThingsStatus', fDB', mDB') = analysisDriver cpool loadedThings loadedThingsStatus fDB mDB thing
-                in  analyseAll cpool loadedThings loadedThingsStatus' fDB' mDB'     
+                in  analyseAll cmap loadedThings loadedThingsStatus' fDB' mDB'     
 
 -- assumes thing to be in loadedThings
 analysisDriver ::       [ConstantInfo]  -> 
@@ -178,7 +203,8 @@ analysisDriver cpool loadedThings loadedThingsStatus fDB mDB thing = -- thing is
                         --                              note that we do not pass the current
                         --                              statuses to field analysis as fields are always
                         --                              analyzable in this setting
-                else    if (loadedThingsStatus ! thing) == Analyzing -- found loop
+                else    trace ("Analyzing " ++ show thing) $ 
+                        if (loadedThingsStatus ! thing) == Analyzing -- found loop
                         then    let mID = methodID thing
                                     mDB' = M.insert mID UnanalyzableMethod mDB
                                 in  (M.delete thing loadedThingsStatus, fDB, mDB')
@@ -222,6 +248,7 @@ analyseMethod ::        [ConstantInfo] ->
                         (LoadedThingsStatus, FieldDB, MethodDB)
 analyseMethod cpool loadedThings loadedThingsStatus fDB mDB thing =
         let     mID = methodID thing
+                mName = fst mID
                 mDes  = snd mID
                 mData = methodData (loadedThings ! thing)
                 (_, mCode, mCFG, af) = mData
@@ -233,10 +260,13 @@ analyseMethod cpool loadedThings loadedThingsStatus fDB mDB thing =
                 nAl  = mNAl ++ fNAl
                 nA  = filter (\x -> M.notMember x loadedThings) nAl 
                         -- not previously analyzed and also not loaded, but required for analysis
-                        --
+                        
         in      if (AMNative `elem` af || AMSynchronized `elem` af || AMVarargs `elem` af)    -- These identifiers enable immediate disqualification
                 then (loadedThingsStatus, fDB, M.insert mID UnanalyzableMethod mDB)
-                else    if nonEmpty nA
+                else if isInitialStrongImpure mName
+                     then (loadedThingsStatus, fDB, M.insert mID StrongImpure mDB)
+                     else
+                        if nonEmpty nA
                         then (loadedThingsStatus, fDB, M.insert mID UnanalyzableMethod mDB)
                         else let        (loadedThingsStatus', fDB', mDB') = feedAll cpool loadedThings loadedThingsStatus fDB mDB nAl
                                         -- after this all deps of this method is not in loadedThingsStatus, as they have all been analyzed
@@ -501,6 +531,8 @@ getAnalysis = do
                 locs <- getLocalHeaps
                 
                 results <- forM [0..length cas - 1] $ \j -> exceptify $ analyseAtom j (cas !! j) (locs !! j) (stks !! j)
+        
+                whenExit (length results > tHRESHOLD) UnanalyzableMethod
         
                 whenExit (UnanalyzableMethod `elem` results) UnanalyzableMethod
                 whenExit (StrongImpure `elem` results) StrongImpure

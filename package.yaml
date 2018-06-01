@@ -28,6 +28,7 @@ dependencies:
 - cereal >= 0.5.5
 - fgl-visualize >= 0.1
 - process >= 1.6
+- yaml >= 0.8.20
 library:
   source-dirs: src
 

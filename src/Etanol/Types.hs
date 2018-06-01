@@ -19,7 +19,8 @@ module Etanol.Types (
                 FieldID(..), MethodID(..),
                 firstof2, secondof2, firstof3, secondof3, thirdof3,
                 firstof4, secondof4, thirdof4, fourthof4,
-                adjoinClassName
+                adjoinClassName,
+                toFieldID, toMethodID
                 ) where
 
 import qualified Data.Map.Strict as M
@@ -172,6 +173,12 @@ getMethod className methodInfo = let methodName :: String = adjoinClassName clas
                                  in ((methodName, methodDescriptor), methodCode, methodCFG, methodAccessFlags)
 
 
+toMethodID :: NamedMethodCode -> MethodID
+toMethodID (x, _, _, _) = x
+
+toFieldID :: NamedField -> FieldID
+toFieldID (x, _) = x
+                                 
 getMethods :: RawClassFile -> [NamedMethodCode]
 getMethods cf = map (getMethod className) mthds
                 where

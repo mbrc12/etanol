@@ -41,4 +41,3 @@ getClassFileNames directory = do
 readRawClassFilesInDirectory :: FilePath -> IO [Either Error RawClassFile]
 readRawClassFilesInDirectory directory = getClassFileNames directory >>= mapM readRawClassFile
 
-
