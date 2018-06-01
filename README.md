@@ -4,10 +4,12 @@ Currently the project is in its initial stages, and almost nothing is implemente
 
 You can test the project now, although its highly likely that the code will fail for your test-case right now, as a lot of debugging needs to be done. Anyway, after you clone the repository, do
 
-> $ cd etanol
-> $ stack ghci
-> <Should compile all files>
-> >> startpoint "<path/to/directory/containing/classes>"
+```
+$ cd etanol
+$ stack ghci
+<Should compile all files>
+>> startpoint "<path/to/directory/containing/classes>"
+```
 
 `startpoint` is exported by `Etanol.Driver`, and is a convenience function to the Analysis interface.
 
