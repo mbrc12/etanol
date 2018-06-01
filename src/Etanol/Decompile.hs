@@ -10,7 +10,8 @@ module Etanol.Decompile (
                 primStoreIndexed, primLoadIndexed,
                 primLoadInbuilt0, primLoadInbuilt1, primLoadInbuilt2, primLoadInbuilt3,
                 primStoreInbuilt0, primStoreInbuilt1, primStoreInbuilt2, primStoreInbuilt3,
-                getStatic, putStatic
+                getStatic, putStatic,
+                javaNamify
                 ) where
 
 import Data.Binary (Word8, Word16, Word32)

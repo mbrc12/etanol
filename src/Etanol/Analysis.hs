@@ -1,4 +1,4 @@
-{-# LANGUAGE DuplicateRecordFields, OverloadedStrings, MultiWayIf #-}
+{-# LANGUAGE DuplicateRecordFields, OverloadedStrings, MultiWayIf, BangPatterns #-}
 
 module Etanol.Analysis (
                 isFinalStaticField, dependencies, AnyID(..), uniques, CPoolMap(..),
@@ -6,7 +6,7 @@ module Etanol.Analysis (
                 StackObject(..), ReturnType(..), ObjectField(..), Stack(..),
                 Stacks(..), MutLocs(..), LocalHeap(..), LocalHeaps(..), Status(..),
                 AnyName(..), NamePrefix(..), initialStrongImpureList, tHRESHOLD,
-                isInitialStrongImpure
+                isInitialStrongImpure, descriptorIndices2
         ) where
 
 -- update what is being imported
@@ -36,8 +36,8 @@ type AnyName    = String
 tHRESHOLD :: Int
 tHRESHOLD = 50
 
-traceM :: (Monad m, Show a) => a -> m ()
-traceM x = trace (show x) $ return ()
+traceM :: (Monad m) => String -> m ()
+traceM x = trace x $ return ()
 
 -- unq returns the unique elements of the list, provided they are orderable
 unq = map head . group . sort
@@ -168,7 +168,7 @@ type CPoolMap = M.Map ClassName [ConstantInfo]
 
 getConstantPoolForThing :: CPoolMap -> AnyID -> [ConstantInfo]
 getConstantPoolForThing cmap thing = if isNothing result 
-                                        then error "Constant Pool does not exist!"
+                                        then error $ "Constant Pool does not exist for " ++ cn ++ "."
                                         else fromJust result
                                 where
                                         toName :: AnyID -> AnyName
@@ -284,12 +284,25 @@ analyseMethod cpool loadedThings loadedThingsStatus fDB mDB thing =
                              in         if M.member thing loadedThingsStatus'
                                         then let  desidx = descriptorIndices2 $ mDes
                                                   initialHeap = M.fromList desidx
-                                                  lhp = [initialHeap]
+                                                  
+                                                  srefpred :: StackObject -> StackObject
+                                                  srefpred (SReference x) = SReference (x - 1)
+                                                  srefpred y = y
+                                                  
+                                                  lh' = if (AMStatic `elem` af)  
+                                                           then M.map srefpred $ M.mapKeys pred initialHeap      
+                                                                                                -- if method is static then each elem is -1
+                                                                                                -- of its prev value. Experiment with descriptorIndices2
+                                                                                                -- to understand
+                                                           else M.insert 0 (SReference 0) initialHeap
+                                                                                                -- otherwise just add the `this` instance.
+                                                  lhp = [lh']
                                                   initialState = AnalysisBundle cpool mDB fDB mCFG lhp [[]] [theStart] [[]]
                                                   (finalState, verdict) = resultant getAnalysis initialState
                                                   fDB'  = fieldDB finalState
-                                                  mDB'  = methodDB finalState 
-                                                  mut  =  unq $ concat (muts finalState)
+                                                  mDB'  = methodDB finalState
+                                                  mut  =  unq $ concat (mutDB finalState)
+                                                  
                                                   -- if atleast one path mutates a parameter, the pure becomes local
                                                   fin  =  if verdict == Pure && (not $ null mut) then Local else verdict
                                              in  (loadedThingsStatus', fDB', M.insert mID fin mDB')
@@ -424,7 +437,7 @@ data AnalysisBundle = AnalysisBundle {
                         lHeaps  :: LocalHeaps,
                         stacks  :: Stacks,                              
                         cpos    :: [Int],
-                        muts    :: [MutLocs] }        deriving Show
+                        mutDB    :: [MutLocs] }        deriving Show
 
 type AnalysisM = FX AnalysisBundle MethodType   -- the analysis monad
 
@@ -496,7 +509,7 @@ localHeapOperate :: LocalHeap -> Int -> StackObject -> LocalHeap
 localHeapOperate loc pos obj = M.insert pos obj loc
 
 getMuts :: AnalysisM [MutLocs]
-getMuts = pure muts <*> getS
+getMuts = pure mutDB <*> getS
 
 setMuts :: [MutLocs] -> AnalysisM ()
 setMuts ms = do
@@ -520,7 +533,7 @@ consumeCode = do
 
                 let q = concatMap (\(l, s, c, m) -> zip4 (repeat l) (repeat s) (suc g c) (repeat m)) $ zip4 loc stk p mut
                 let np = map thirdof4 q
-
+                
                 setCPos np
                 setLocalHeaps $ map firstof4 q
                 setStacks $ map secondof4 q
@@ -533,16 +546,16 @@ getAnalysis = do
                 cas   <- consumeCode
                 pos   <- getCPos
                 
-                whenExit (null pos) Pure
+                whenExit (all (== theEnd) pos) Pure     -- all of them are at the end
 
                 stks <- getStacks
                 locs <- getLocalHeaps
                 
                 results <- forM [0..length cas - 1] $ \j -> exceptify $ analyseAtom j (cas !! j) (locs !! j) (stks !! j)
         
-                traceM "Outta there"
-        
-                whenExit (length results > tHRESHOLD) UnanalyzableMethod
+                mutl <- getMuts
+                
+                whenExit (length results > tHRESHOLD) UnanalyzableMethod        -- too many branches
         
                 whenExit (UnanalyzableMethod `elem` results) UnanalyzableMethod
                 whenExit (StrongImpure `elem` results) StrongImpure
@@ -599,6 +612,7 @@ analyseAtom :: Int -> CodeAtom -> LocalHeap -> Stack -> AnalysisM MethodType
 analyseAtom j (pos, []) loc stk = return Pure
 analyseAtom j (pos, ca@(op : rest)) loc stk = 
         do
+                
                 whenExit (op == monitorEnterOp || op == monitorExitOp || op == invokeInterfaceOp || op == invokeDynamicOp) UnanalyzableMethod
                 
                 -- NOTE : The below restriction is totally lame, is due to the laziness of the author. Will be fixed asap.
@@ -610,26 +624,28 @@ analyseAtom j (pos, ca@(op : rest)) loc stk =
                 fDB   <- getFDB 
                 mDB   <- getMDB
                 
-                traceM "Inna here"
-                
                 -- (*****) - reference from above comment
+                
+                traceM ("Stack: " ++ show stk)
+                
                 whenExit (op == areturnOp && (isJust $ isParamRef $ head stk)) Impure        -- returns a reference to something passed in as an argument
-
-                if op `elem` loads
-                then let idx = getIdxOp ca
-                     in if op `elem` loads1 
-                        then let elm = getLocalHeapElem loc idx
-                             in  setStackPos j $ elm : stk
-                        else let elm = getLocalHeapElem loc idx -- push long, but the thing is the same;  elm is SBasicLong
-                             in  setStackPos j $ elm : stk
-                else let idx = getIdxOp ca
-                     in  if op `elem` stores1
-                         then let elm = head stk
-                              in do  
+                
+                when (op `elem` loads)  $ do
+                        let idx = getIdxOp ca
+                        if op `elem` loads1 
+                           then let elm = getLocalHeapElem loc idx
+                                in  setStackPos j $ (elm : stk)
+                           else let elm = getLocalHeapElem loc idx -- push long, but the thing is the same;  elm is SBasicLong
+                                in  setStackPos j $ (elm : stk)
+                when (op `elem` stores) $ do
+                        let idx = getIdxOp ca
+                        if op `elem` stores1
+                            then let elm = head stk
+                                 in do  
                                         setLocalHeapPos j $ localHeapOperate loc idx elm
                                         setStackPos j     $ stackOperate stk (1, 0)  -- remove 1
-                         else let elm = head stk
-                              in do
+                            else let elm = head stk
+                                 in do
                                         setLocalHeapPos j $ localHeapOperate loc idx elm
                                         setStackPos j     $ stackOperateL stk (1, 0)  -- remove 1 only, but now elm is SBasicLong
 
@@ -684,13 +700,13 @@ analyseAtom j (pos, ca@(op : rest)) loc stk =
                         let ftype    = getSTypeOfFieldWord8 rest cpool
                             topelem  = head stk
                             rstk     = tail stk
-                        if ftype == OFBasic 
-                        then setStackPos j (SBasic : rstk) 
-                        else setStackPos j (topelem : rstk)     -- topelem ==    SReferenceFresh then this is also fresh reference
-                                                                        --               SReference Int then this is also int SReference
+                        if | ftype == OFBasic  -> setStackPos j (SBasic : rstk) 
+                           | ftype == OFBasicLong -> setStackPos j (SBasicLong : rstk)
+                           | otherwise           -> setStackPos j (topelem : rstk)      -- topelem ==    SReferenceFresh then this is also fresh reference
+                                                                                        --               SReference Int then this is also int SReference
                 when (op == putFieldOp) $ do
                         let ftype    = getSTypeOfFieldWord8 rest cpool
-                            obj      = head stk    
+                            !obj     = stk !! 1         -- item 2    
                         if ftype == OFReference
                         then exitWith Impure
                         else do
@@ -819,7 +835,7 @@ analyseAtom j (pos, ca@(op : rest)) loc stk =
                          args             = take nar argsrem
                          oth              = drop nar argsrem
                          par              = filter (isJust . isParamRef) args -- parameters of this function sent in as parameter to that function 
-                         mty              = mDB !? mID
+                         mty              = mDB !? mID 
                      if isNothing mty
                      then exitWith UnanalyzableMethod
                      else do

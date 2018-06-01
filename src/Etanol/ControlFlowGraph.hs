@@ -57,7 +57,8 @@ generateControlFlowGraph code = let     g1 = mkGraph (map (\ca@(pos, subcode) ->
                                         g1'= insNodes [dummyStart, dummyEnd] g1 
                                         g2 = insEdges (concatMap (uncurry getEdges) (oneOff code)) g1'
                                         g2'= insEdge (theStart, fst (code !! 0), EdgeData) g2
-                                in      g2'
+                                        g2'' = insEdge (theEnd, theEnd, EdgeData) g2'   -- for a subtle error. end to end transfers are essential
+                                in      g2''
                                         
 
 

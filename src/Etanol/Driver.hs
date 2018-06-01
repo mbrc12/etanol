@@ -18,6 +18,7 @@ import qualified Data.Map as M
 import Etanol.Analysis
 import Etanol.Crawler
 import Etanol.Types
+import Etanol.Decompile
 import ByteCodeParser.BasicTypes
 
 configName :: FilePath
@@ -65,7 +66,7 @@ getConfigDirectory = do
         
         let config :: Maybe Config = Y.decode configdata
         
-        print config
+        --print config
         
         when (isNothing config) $ error $ "Invalid config file " ++ show path ++ ". Aborting."
         
@@ -114,7 +115,7 @@ driver config path = do
             mthds = concatMap getMethods rcs                 
             flds  = concatMap getFields  rcs    
             
-            cnames = map thisClass rcs
+            cnames = map (javaNamify . thisClass) rcs
             cps    = map constantPool rcs
             
             cmap = M.fromList $ zip cnames cps
@@ -132,13 +133,14 @@ driver config path = do
             
             (_, ffDB, fmDB) = analyseAll cmap ltm lst ifDB imDB
         
-        putStrLn "Saving databases.."
+        mapM putStrLn cnames
+        
         saveFieldDB config ffDB
         saveMethodDB config fmDB
         putStrLn "Completed."
         
         return (ffDB, fmDB)    
-        
+
 startpoint :: FilePath -> IO (FieldDB, MethodDB)
 startpoint path = do
         conf <- getConfigDirectory
