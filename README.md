@@ -1,4 +1,4 @@
-# Etanol - a purity and nullability analysis tool for [Eta](https://github.com/typelead/eta)
+# Etanol - a purity and nullability analysis tool for Java
 
 Currently the project is in its initial stages, and almost nothing is implemented. The specification/algorithm/implementation details are being written - please check out the Wiki.
 
