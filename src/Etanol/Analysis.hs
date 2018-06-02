@@ -49,7 +49,15 @@ initialStrongImpureList = ["java.io", "java.net", "javax.swing",
                            "javax.rmi", "javax.sound"]
 
 isInitialStrongImpure :: AnyName -> Bool
-isInitialStrongImpure namae = namae `elem` initialStrongImpureList
+isInitialStrongImpure namae = any (isPrefix namae) initialStrongImpureList
+
+-- if s is a prefix of t
+isPrefix :: String -> String -> Bool
+isPrefix t s = if length t < length s 
+                then False
+                else if (s == take (length s) t)
+                        then True
+                        else False
 
 getFieldOp, putFieldOp, invokeStaticOp, invokeSpecialOp, invokeVirtualOp, invokeInterfaceOp, invokeDynamicOp :: Word8
 newOp, newArrayOp, monitorEnterOp, monitorExitOp, aThrowOp, ldcOp, ldc_wOp, checkCastOp :: Word8
@@ -197,7 +205,7 @@ analyseAll cmap loadedThings loadedThingsStatus fDB mDB =
            then (loadedThingsStatus, fDB, mDB)
            else    let  (thing, _) = M.elemAt 0 loadedThingsStatus
                         cpool = getConstantPoolForThing cmap thing
-                        (loadedThingsStatus', fDB', mDB') = analysisDriver cpool loadedThings loadedThingsStatus fDB mDB thing
+                        (loadedThingsStatus', fDB', mDB') = analysisDriver cmap cpool loadedThings loadedThingsStatus fDB mDB thing
                    in   trace ("LoadedThingsStatus: " ++ (show $ M.size loadedThingsStatus)) $ 
                                 analyseAll cmap loadedThings loadedThingsStatus' fDB' mDB'     
 
@@ -206,13 +214,14 @@ toRepr (EFieldID f) = " Field " ++ (fst f) ++ ":" ++ (snd f)
 toRepr (EMethodID m) = " Method " ++ (fst m) ++ ":" ++ (snd m)
                                 
 -- assumes thing to be in loadedThings
-analysisDriver ::       [ConstantInfo]  -> 
+analysisDriver ::       CPoolMap ->
+                        [ConstantInfo]  -> 
                         LoadedThings    -> 
                         LoadedThingsStatus ->
                         FieldDB        -> MethodDB              ->                    -- olds
                         AnyID                                   ->                    -- target  
                         (LoadedThingsStatus, FieldDB, MethodDB)                       -- new values
-analysisDriver cpool loadedThings loadedThingsStatus fDB mDB thing = -- thing is guaranteed to be in loadedThings 
+analysisDriver cmap cpool loadedThings loadedThingsStatus fDB mDB thing = -- thing is guaranteed to be in loadedThings 
         let thingdata = trace ("Here" ++ show (loadedThings !? thing)) $ loadedThings ! thing
         in      if isField thing 
                 then (M.delete thing loadedThingsStatus, analyseField cpool loadedThings fDB thing, mDB)
@@ -220,6 +229,8 @@ analysisDriver cpool loadedThings loadedThingsStatus fDB mDB thing = -- thing is
                         --                              note that we do not pass the current
                         --                              statuses to field analysis as fields are always
                         --                              analyzable in this setting
+                        -- NOTE : analyseField can be called with just the cpool as it doesn't need anything else for
+                        -- recursive analysis.
                 else    trace ("Analyzing " ++ show thing) $ 
                         if (loadedThingsStatus ! thing) == Analyzing -- found loop
                         then    let mID = methodID thing
@@ -227,7 +238,9 @@ analysisDriver cpool loadedThings loadedThingsStatus fDB mDB thing = -- thing is
                                 in  (M.delete thing loadedThingsStatus, fDB, mDB')
                         else    let mID = methodID thing
                                     loadedThingsStatus' = M.insert thing Analyzing loadedThingsStatus
-                                    (loadedThingsStatus'', fDB', mDB') = analyseMethod cpool loadedThings loadedThingsStatus' fDB mDB thing
+                                    (loadedThingsStatus'', fDB', mDB') = analyseMethod cmap cpool loadedThings loadedThingsStatus' fDB mDB thing
+                                                                        -- However you need to pass cmap here as it can recursively analyse
+                                                                        -- other stuff
                                 in  trace(toRepr thing ++ " => " ++ show (mDB' ! mID)) $ (M.delete thing loadedThingsStatus'', fDB', mDB')
 
 
@@ -248,23 +261,25 @@ analyseField cpool loadedThings fDB thing =
         in  M.insert fID verdict fDB
 
 -- | Feeding mechanism through the analysisDriver. See `analyseMethod`
-feedAll ::      [ConstantInfo] -> LoadedThings -> LoadedThingsStatus -> FieldDB -> MethodDB -> [AnyID] ->
+feedAll ::   CPoolMap -> LoadedThings -> LoadedThingsStatus -> FieldDB -> MethodDB -> [AnyID] ->
                 (LoadedThingsStatus, FieldDB, MethodDB)
 feedAll _     _            loadedThingsStatus fDB mDB []           = (loadedThingsStatus, fDB, mDB)
-feedAll cpool loadedThings loadedThingsStatus fDB mDB (aID : rest) =
+feedAll cmap loadedThings loadedThingsStatus fDB mDB (aID : rest) =
         let (lth', fdb', mdb') =        if M.member aID loadedThingsStatus 
-                                        then analysisDriver cpool loadedThings loadedThingsStatus fDB mDB aID
+                                        then analysisDriver cmap (getConstantPoolForThing cmap aID) loadedThings loadedThingsStatus fDB mDB aID
+                                                -- this is why you need the cmap to analyseMethod, as it can recursively call this.
                                         else (loadedThingsStatus, fDB, mDB)
-        in  feedAll cpool loadedThings lth' fdb' mdb' rest
+        in  feedAll cmap loadedThings lth' fdb' mdb' rest
 
 -- checks properties for method
 -- currently no recursive method is analyzed to be pure
-analyseMethod ::        [ConstantInfo] ->
+analyseMethod ::        CPoolMap ->
+                        [ConstantInfo] ->
                         LoadedThings -> LoadedThingsStatus ->
                         FieldDB -> MethodDB ->
                         AnyID ->
                         (LoadedThingsStatus, FieldDB, MethodDB)
-analyseMethod cpool loadedThings loadedThingsStatus fDB mDB thing =
+analyseMethod cmap cpool loadedThings loadedThingsStatus fDB mDB thing =
         let     mID = methodID thing
                 mName = fst mID
                 mDes  = snd mID
@@ -287,7 +302,8 @@ analyseMethod cpool loadedThings loadedThingsStatus fDB mDB thing =
                      else
                         if nonEmpty nA
                         then (loadedThingsStatus, fDB, M.insert mID UnanalyzableMethod mDB)
-                        else let        (loadedThingsStatus', fDB', mDB') = feedAll cpool loadedThings loadedThingsStatus fDB mDB nAl
+                        else let        (loadedThingsStatus', fDB', mDB') = feedAll cmap loadedThings loadedThingsStatus fDB mDB nAl
+                                                                                -- here you call feedAll with cmap
                                         -- after this all deps of this method is not in loadedThingsStatus, as they have all been analyzed
                                         -- recursively. So we can now safely analyse this method itself
                                         -- But it may happen that this method itself got into a loop and was analyzed already
@@ -697,7 +713,7 @@ analyseAtom j (pos, ca@(op : rest)) loc stk =
                 whenExit ((op == getStatic || op == putStatic) && (not $ isFinalStaticFieldWord8MaybeStripped rest cpool fDB)) Impure
                 
                 when (op == getStatic) $ do
-                        let ty = getSTypeOfConstantWord8 rest cpool
+                        let ty = getSTypeOfFieldWord8 rest cpool
                         if  | ty == OFBasic     -> setStackPos j (SBasic : stk)
                             | ty == OFBasicLong -> setStackPos j (SBasicLong : stk)
                             | otherwise         -> error "Unexpected exception. getStatic does not expect a Reference"
