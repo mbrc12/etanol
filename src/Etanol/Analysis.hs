@@ -40,7 +40,7 @@ traceM :: (Monad m) => String -> m ()
 traceM x = trace x $ return ()
 
 -- unq returns the unique elements of the list, provided they are orderable
-unq = map head . group . sort
+unq = map (unsafeHead "unq") . group . sort
 
 initialStrongImpureList :: [NamePrefix] 
 initialStrongImpureList = ["java.io", "java.net", "javax.swing", 
@@ -112,7 +112,7 @@ isFinalStaticField cpool fieldDB idx = let      fid     = getFieldName cpool idx
                                           else if ftype == Just Normal then Just False else Just True 
 
 uniques :: [AnyID] -> [AnyID]
-uniques =  map head . group . sort
+uniques =  map (unsafeHead "uniques") . group . sort
 
 
 data AnyID =    EFieldID { fieldID :: FieldID } |
@@ -166,6 +166,10 @@ nonEmpty = not . null
 
 type CPoolMap = M.Map ClassName [ConstantInfo] 
 
+-- if empty list then print error else return head
+unsafeHead :: String -> [a] -> a
+unsafeHead err xs = if null xs then (error err) else (head xs)
+
 getConstantPoolForThing :: CPoolMap -> AnyID -> [ConstantInfo]
 getConstantPoolForThing cmap thing = if isNothing result 
                                         then error $ "Constant Pool does not exist for " ++ cn ++ "."
@@ -189,13 +193,18 @@ analyseAll ::           CPoolMap  ->
                         FieldDB        -> MethodDB              ->                    -- old  
                         (LoadedThingsStatus, FieldDB, MethodDB)                       -- new values
 analyseAll cmap loadedThings loadedThingsStatus fDB mDB =
-        if M.null loadedThingsStatus then (loadedThingsStatus, fDB, mDB)
-        else    let (thing, _) = M.elemAt 0 loadedThingsStatus
-                    cpool = getConstantPoolForThing cmap thing
-                    (loadedThingsStatus', fDB', mDB') = analysisDriver cpool loadedThings loadedThingsStatus fDB mDB thing
-                in  trace ("LoadedThingsStatus: " ++ (show $ M.size loadedThingsStatus)) $ 
-                        analyseAll cmap loadedThings loadedThingsStatus' fDB' mDB'     
+        if M.null loadedThingsStatus 
+           then (loadedThingsStatus, fDB, mDB)
+           else    let  (thing, _) = M.elemAt 0 loadedThingsStatus
+                        cpool = getConstantPoolForThing cmap thing
+                        (loadedThingsStatus', fDB', mDB') = analysisDriver cpool loadedThings loadedThingsStatus fDB mDB thing
+                   in   trace ("LoadedThingsStatus: " ++ (show $ M.size loadedThingsStatus)) $ 
+                                analyseAll cmap loadedThings loadedThingsStatus' fDB' mDB'     
 
+toRepr :: AnyID -> String
+toRepr (EFieldID f) = " Field " ++ (fst f) ++ ":" ++ (snd f)
+toRepr (EMethodID m) = " Method " ++ (fst m) ++ ":" ++ (snd m)
+                                
 -- assumes thing to be in loadedThings
 analysisDriver ::       [ConstantInfo]  -> 
                         LoadedThings    -> 
@@ -204,7 +213,7 @@ analysisDriver ::       [ConstantInfo]  ->
                         AnyID                                   ->                    -- target  
                         (LoadedThingsStatus, FieldDB, MethodDB)                       -- new values
 analysisDriver cpool loadedThings loadedThingsStatus fDB mDB thing = -- thing is guaranteed to be in loadedThings 
-        let thingdata = loadedThings ! thing
+        let thingdata = trace ("Here" ++ show (loadedThings !? thing)) $ loadedThings ! thing
         in      if isField thing 
                 then (M.delete thing loadedThingsStatus, analyseField cpool loadedThings fDB thing, mDB)
                         -- delete object                get the changed field                   old method db works
@@ -219,7 +228,7 @@ analysisDriver cpool loadedThings loadedThingsStatus fDB mDB thing = -- thing is
                         else    let mID = methodID thing
                                     loadedThingsStatus' = M.insert thing Analyzing loadedThingsStatus
                                     (loadedThingsStatus'', fDB', mDB') = analyseMethod cpool loadedThings loadedThingsStatus' fDB mDB thing
-                                in  (M.delete thing loadedThingsStatus'', fDB', mDB')
+                                in  trace(toRepr thing ++ " => " ++ show (mDB' ! mID)) $ (M.delete thing loadedThingsStatus'', fDB', mDB')
 
 
 isBasic :: FieldDescriptor -> Bool
@@ -270,7 +279,8 @@ analyseMethod cpool loadedThings loadedThingsStatus fDB mDB thing =
                 nA  = filter (\x -> M.notMember x loadedThings) nAl 
                         -- not previously analyzed and also not loaded, but required for analysis
                         
-        in      if (AMNative `elem` af || AMSynchronized `elem` af || AMVarargs `elem` af)    -- These identifiers enable immediate disqualification
+        in      if (AMNative `elem` af || AMSynchronized `elem` af || AMVarargs `elem` af || null mCode)    
+                        -- These identifiers enable immediate disqualification or if Code is empty implying an abstract method
                 then (loadedThingsStatus, fDB, M.insert mID UnanalyzableMethod mDB)
                 else if isInitialStrongImpure mName
                      then (loadedThingsStatus, fDB, M.insert mID StrongImpure mDB)
@@ -626,9 +636,7 @@ analyseAtom j (pos, ca@(op : rest)) loc stk =
                 
                 -- (*****) - reference from above comment
                 
-                traceM ("Stack: " ++ show stk)
-                
-                whenExit (op == areturnOp && (isJust $ isParamRef $ head stk)) Impure        -- returns a reference to something passed in as an argument
+                whenExit (op == areturnOp && (isJust $ isParamRef $ unsafeHead "Return ops" stk)) Impure        -- returns a reference to something passed in as an argument
                 
                 when (op `elem` loads)  $ do
                         let idx = getIdxOp ca
@@ -640,33 +648,33 @@ analyseAtom j (pos, ca@(op : rest)) loc stk =
                 when (op `elem` stores) $ do
                         let idx = getIdxOp ca
                         if op `elem` stores1
-                            then let elm = head stk
+                            then let elm = unsafeHead "Stores if 1" stk
                                  in do  
                                         setLocalHeapPos j $ localHeapOperate loc idx elm
                                         setStackPos j     $ stackOperate stk (1, 0)  -- remove 1
-                            else let elm = head stk
+                            else let elm = unsafeHead "Stores else 1" stk
                                  in do
                                         setLocalHeapPos j $ localHeapOperate loc idx elm
                                         setStackPos j     $ stackOperateL stk (1, 0)  -- remove 1 only, but now elm is SBasicLong
 
                 
                 if elem op $ basicopAll \\ (loads ++ stores)            -- do everything basic that does not involve the local heap
-                then    let tup = head $ filter (\t -> op `elem` basicop t) definedAtBasic
+                then    let tup = unsafeHead "1" $ filter (\t -> op `elem` basicop t) definedAtBasic
                         in  setStackPos j $ stackOperate stk tup
                 else    return ()
     
                 if elem op $ basicopLAll \\ (loads ++ stores)            -- do everything basic that does not involve the local heap; special for long
-                then    let tup = head $ filter (\t -> op `elem` basicopL t) definedAtBasicL
+                then    let tup = unsafeHead "2" $ filter (\t -> op `elem` basicopL t) definedAtBasicL
                         in  setStackPos j $ stackOperateL stk tup
                 else    return ()
 
                 if elem op $ nonBasicopAll \\ (loads ++ stores)            -- see defn for nonBasicop
-                then    let tup = head $ filter (\t -> op `elem` nonBasicop t) definedAtNonBasic
+                then    let tup = unsafeHead "3" $ filter (\t -> op `elem` nonBasicop t) definedAtNonBasic
                         in  setStackPos j $ stackOperate stk tup
                 else    return ()
                                 
                 if elem op $ nonBasicopLAll \\ (loads ++ stores)            -- see defn for nonBasicop; special for long ops
-                then    let tup = head $ filter (\t -> op `elem` nonBasicopL t) definedAtNonBasicL
+                then    let tup = unsafeHead "4" $ filter (\t -> op `elem` nonBasicopL t) definedAtNonBasicL
                         in  setStackPos j $ stackOperateL stk tup
                 else    return ()
                 
@@ -698,7 +706,7 @@ analyseAtom j (pos, ca@(op : rest)) loc stk =
 
                 when (op == getFieldOp) $ do
                         let ftype    = getSTypeOfFieldWord8 rest cpool
-                            topelem  = head stk
+                            topelem  = unsafeHead "getFieldOp" stk
                             rstk     = tail stk
                         if | ftype == OFBasic  -> setStackPos j (SBasic : rstk) 
                            | ftype == OFBasicLong -> setStackPos j (SBasicLong : rstk)
@@ -875,7 +883,7 @@ voidElem  = "V"
 
 getReturnType :: MethodID -> ReturnType
 getReturnType (_, des) = let ret = reverse $ takeWhile (/= ')') $ reverse des
-                             fc  = head ret
+                             fc  = unsafeHead "getReturnType" ret
                          in if | fc `elem` basicList    -> RTBasic
                                | fc `elem` longList     -> RTBasicLong
                                | fc `elem` refList      -> RTReference
@@ -921,7 +929,7 @@ getSTypeOfFieldWord8 :: [Word8] -> [ConstantInfo] -> ObjectField
 getSTypeOfFieldWord8 rest cpool = getSTypeOfField (fromIntegral $ toIndex rest) cpool
 
 getSTypeOfField :: Int -> [ConstantInfo] -> ObjectField
-getSTypeOfField idx cpool = let des = head $ snd $ getFieldName cpool idx
+getSTypeOfField idx cpool = let des = unsafeHead "getSType" $ snd $ getFieldName cpool idx
                             in  if      | des `elem` basicList                  -> OFBasic
                                         | des `elem` longList                   -> OFBasicLong
                                         | des `elem` refList                    -> OFReference
@@ -942,7 +950,7 @@ descriptorIndices2 descriptor = recursiveCalc desc2 1
                                                                             then (x, SReference x) : recursiveCalc (drop 1 $ dropWhile (';' /=) left) (x + 1)
                                                                             else if c == '['
                                                                                     then let arrTypeAnd = dropWhile ('[' ==) left
-                                                                                             arrType    = head arrTypeAnd
+                                                                                             arrType    = unsafeHead "descriptorIndices2" arrTypeAnd
                                                                                          in if arrType == 'L'  
                                                                                                then (x, SReference x) : recursiveCalc (drop 1 $ dropWhile (';' /=) arrTypeAnd) (x + 1)
                                                                                                else (x, SReference x) : recursiveCalc (drop 1 arrTypeAnd) (x + 1)

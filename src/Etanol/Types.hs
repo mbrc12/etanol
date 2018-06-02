@@ -42,6 +42,9 @@ import Etanol.ControlFlowGraph
 import GHC.Generics
 import Data.Serialize
 
+unsafeHead :: String -> [a] -> a
+unsafeHead err xs = if null xs then (error err) else (head xs)
+
 getClassName :: String -> String
 getClassName = reverse . tail . dropWhile (/= '.') . reverse
 
@@ -161,9 +164,8 @@ type Descriptor = [(Int, Bool)] -- see `descriptorIndices` in ByteCodeParser.Rea
 type NamedMethodCode = (MethodID, [CodeAtom], CFG, [MethodAccessFlag])
 
 findCodeAttribute :: [AttributeInfo] -> [CodeAtom]
-findCodeAttribute ainfo =  (code :: AInfo -> [CodeAtom]) $
-                                attributeInfo $ 
-                                        head $ filter (\at -> attributeType at == ATCode) ainfo -- there is expected to be only 1 code attribute in a method
+findCodeAttribute ainfo =  if null codes then [] else (code :: AInfo -> [CodeAtom]) $ attributeInfo $ head codes
+                where codes = filter (\at -> attributeType at == ATCode) ainfo -- there is expected to be only 1 code attribute in a method
 
 getMethod :: ClassName -> MethodInfo -> NamedMethodCode
 getMethod className methodInfo = let methodName :: String = adjoinClassName className $ name (methodInfo :: MethodInfo)

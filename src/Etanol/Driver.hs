@@ -1,10 +1,10 @@
 {-# LANGUAGE OverloadedStrings, DuplicateRecordFields, DeriveGeneric, ScopedTypeVariables #-}
 
 module Etanol.Driver (
-               Config(..), startpoint
+               Config(..), startpoint, resetConfigDirectory
         ) where
 
-import System.Directory (doesDirectoryExist, doesFileExist, createDirectory)
+import System.Directory (doesDirectoryExist, doesFileExist, createDirectory, removeDirectoryRecursive)
 import Control.Monad
 import Data.Maybe
 import Data.Either 
@@ -46,7 +46,11 @@ getConfigPath = do
         when (isNothing hDir) $ 
            error "No HOME set! Please set your HOME environment variable."
         
-        let configpath = (fromJust hDir) </> configName   
+        let home = fromJust hDir
+        
+        putStrLn $ "Home directory: " ++ home
+        
+        let configpath = home </> configName   
             
         exs <- doesFileExist configpath
               
@@ -81,6 +85,13 @@ getConfigDirectory = do
         
         return $ confdir
 
+resetConfigDirectory :: IO ()
+resetConfigDirectory = do
+        dir <- getConfigDirectory
+        putStrLn $ "Resetting config directory " ++ dir ++ ".."
+        removeDirectoryRecursive dir
+        putStrLn "Completed."
+        
 getInitialDBs :: FilePath -> IO (FieldDB, MethodDB)
 getInitialDBs config = do
         
@@ -91,8 +102,8 @@ getInitialDBs config = do
         mDB <- getMethodDB config
         
         return (fDB, mDB)
-        
-driver :: FilePath -> FilePath -> IO (FieldDB, MethodDB)
+
+driver :: FilePath -> FilePath -> IO ()
 driver config path = do
         exs <- doesDirectoryExist path
         
@@ -133,15 +144,11 @@ driver config path = do
             
             (_, ffDB, fmDB) = analyseAll cmap ltm lst ifDB imDB
         
-        mapM putStrLn cnames
-        
         saveFieldDB config ffDB
         saveMethodDB config fmDB
         putStrLn "Completed."
         
-        return (ffDB, fmDB)    
-
-startpoint :: FilePath -> IO (FieldDB, MethodDB)
+startpoint :: FilePath -> IO ()
 startpoint path = do
         conf <- getConfigDirectory
         driver conf path

@@ -29,11 +29,14 @@ dependencies:
 - fgl-visualize >= 0.1
 - process >= 1.6
 - yaml >= 0.8.20
+- bytecode-parser
+- bytestring >= 0.10.8.2
+- binary >= 0.8.5.1
 library:
   source-dirs: src
-
+                
 executables:
-  etanol-exe:
+  etanolx:
     main:                Main.hs
     source-dirs:         app
     ghc-options:
@@ -42,6 +45,7 @@ executables:
     - -with-rtsopts=-N
     dependencies:
     - etanol
+    - bytecode-parser
 
 tests:
   etanol-test:
