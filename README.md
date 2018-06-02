@@ -1,6 +1,6 @@
 # Etanol - a purity and nullability analysis tool for Java
 
-Currently the project is in its initial stages, and almost nothing is implemented. The specification/algorithm/implementation details are being written - please check out the Wiki.
+The Wiki will contain more details once the implementation is somewhat stabilized.
 
 You can test the project now, although its highly likely that the code will fail for your test-case right now, as a lot of debugging needs to be done. Anyway, after you clone the repository, do
 
