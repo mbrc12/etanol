@@ -6,7 +6,7 @@ module Etanol.Analysis (
                 StackObject(..), ReturnType(..), ObjectField(..), Stack(..),
                 Stacks(..), MutLocs(..), LocalHeap(..), LocalHeaps(..), Status(..),
                 AnyName(..), NamePrefix(..), initialStrongImpureList, tHRESHOLD,
-                isInitialStrongImpure, descriptorIndices2
+                isInitialStrongImpure, descriptorIndices2, toIndex
         ) where
 
 -- update what is being imported
@@ -107,7 +107,7 @@ checkCastOp = 192
 -- When reading an index from the bytecode into the constantPool, decrement it by 1, as is done here
 -- using pred
 toIndex :: [Word8] -> Word32
-toIndex xs = pred $ sum $ map (uncurry (*)) $ zip (reverse $ map fromIntegral xs) $ map (2^) [0..] 
+toIndex = fromIntegral . pred . sum . map (uncurry (*)) . zip (map (256^) [0..]) . map fromIntegral . reverse 
 
 -- local heap indices do not need decrementing.
 toLocalHeapIndex :: [Word8] -> Int
@@ -241,7 +241,8 @@ analysisDriver cmap cpool loadedThings loadedThingsStatus fDB mDB thing = -- thi
                                     (loadedThingsStatus'', fDB', mDB') = analyseMethod cmap cpool loadedThings loadedThingsStatus' fDB mDB thing
                                                                         -- However you need to pass cmap here as it can recursively analyse
                                                                         -- other stuff
-                                in  trace(toRepr thing ++ " => " ++ show (mDB' ! mID)) $ (M.delete thing loadedThingsStatus'', fDB', mDB')
+                                in  --trace(toRepr thing ++ " => " ++ show (mDB' ! mID)) 
+                                        (M.delete thing loadedThingsStatus'', fDB', mDB')
 
 
 isBasic :: FieldDescriptor -> Bool
@@ -293,8 +294,8 @@ analyseMethod cmap cpool loadedThings loadedThingsStatus fDB mDB thing =
                 nAl  = mNAl ++ fNAl
                 nA  = filter (\x -> M.notMember x loadedThings) nAl 
                         -- not previously analyzed and also not loaded, but required for analysis
-                        
-        in      if (AMNative `elem` af || AMSynchronized `elem` af || AMVarargs `elem` af || null mCode)    
+        in      trace ("Constant pool : " ++ (if (cpool == getConstantPoolForThing cmap thing) then "OK" else error "Constant pool is WRONG!")) $
+                if (AMNative `elem` af || AMSynchronized `elem` af || AMVarargs `elem` af || null mCode)    
                         -- These identifiers enable immediate disqualification or if Code is empty implying an abstract method
                 then (loadedThingsStatus, fDB, M.insert mID UnanalyzableMethod mDB)
                 else if isInitialStrongImpure mName
