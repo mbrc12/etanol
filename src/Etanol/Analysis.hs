@@ -640,6 +640,8 @@ analyseAtom j (pos, []) loc stk = return Pure
 analyseAtom j (pos, ca@(op : rest)) loc stk = 
         do
                 
+                --traceM $ "Code : " ++ show pos ++ " : " ++ show ca
+                
                 whenExit (op == monitorEnterOp || op == monitorExitOp || op == invokeInterfaceOp || op == invokeDynamicOp) UnanalyzableMethod
                 
                 -- NOTE : The below restriction is totally lame, is due to the laziness of the author. Will be fixed asap.
@@ -719,7 +721,10 @@ analyseAtom j (pos, ca@(op : rest)) loc stk =
                             | ty == OFBasicLong -> setStackPos j (SBasicLong : stk)
                             | otherwise         -> error "Unexpected exception. getStatic does not expect a Reference"
 
-                when (op == putStatic) $ error "putStatic not expected!"
+                -- when (op == putStatic) $ error "putStatic not expected!"
+                -- This line was removed because the above conditions do not guarantee that putStatic does not occur
+                -- the only thing that is guaranteed is that putStatic occurs on a FinalStatic field, and that can occur
+                -- only in <clinit>. We believe that does not cause much of a problem.
 
                 when (op == getFieldOp) $ do
                         let ftype    = getSTypeOfFieldWord8 rest cpool
