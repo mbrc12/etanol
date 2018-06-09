@@ -63,7 +63,7 @@ helpMessage = "\n" ++
               "\n" ++
               " reset                           Resets the config directory listed in .etanolrc\n" ++
               "\n" ++
-              " analyse=<absolute/path/>        Analyses recursively all classes in absolute/path/\n"++
+              " analyse=\"absolute/path/\"        Analyses recursively all classes in absolute/path/\n"++
               "                                 after loading them, and updates the database in the\n"++
               "                                 config directory in .etanolrc. Creates a new .etanolrc\n"++
               "                                 and empty database if not previously there or resetted\n"++
