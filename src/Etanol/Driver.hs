@@ -18,6 +18,7 @@ import System.Directory (
 import Control.Monad
 import Data.Maybe
 import Data.Either
+import System.IO
 import System.Exit (die)
 import System.FilePath.Posix ((</>))
 import System.Environment (lookupEnv)
@@ -194,8 +195,18 @@ dumpDatabases :: FilePath -> IO ()
 dumpDatabases path = do
         
         exsdir <- doesDirectoryExist path
-        when (not exsdir) $ die "The directory pointed to does not exist!"
-        
+        when (not exsdir) $ do
+                putStr $ "Directory " ++ path ++ " does not exist. Create? (y/n) [n] "
+                hFlush stdout
+                ch <- getLine
+                when (null ch) $ die "Not creating a new directory."
+                if (head ch `elem` ['y', 'Y']) 
+                   then do
+                           putStrLn "Creating directory.."
+                           createDirectory path
+                           putStrLn "Done."
+                   else die "Not creating a new directory."
+
         confDir <- getConfigDirectory
         
         initialized <- isInit confDir

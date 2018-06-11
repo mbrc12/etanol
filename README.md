@@ -21,4 +21,12 @@ In its current version, etanol can  at least properly analyse the `rt.jar` and G
 
 **Debugging/Error reporting note:** During debugging etanol, I found two main classes of bugs: Bugs that were during analysing the file itself, and could be reproduced even with etanol loading and analysing only that single file, and bugs that occurred only when an entire library was being analysed. So if you find a bug, please report it with the offending class, if you happen to know it from the output at the time. But if isolating that class and analysing it does not reproduce the error, then please also provide (a link to) the context (i.e. the library) being analysed at the time, for the sake of reproducibility.
 
+**Examples:**
+
+1. `etanolx reset analyse="myrt/rt.jar"` : First deletes all previous analysis. Then analyses the `rt.jar` after extracting it from the .jar file.
+2. `etanolx analyse="myjar.jar" reset` : Do not do this as this will first analyse, and then delete all the hardwork by resetting everything.
+3. `etanolx analyse="myjar.jar" dump="."` : Analyse `myjar.jar` and dump the final fields and method databases in the current directory.
+4. `etanolx dump="." analyse="myjar.jar"` : First dump then analyse.
+5. `etanolx dump="." analyse="mydirectory/" dump="final/"` : First dump the current databases, then analyse and then dump the final results again in `final/`.
+
 Thanks to [Nikita Tchayka](https://github.com/NickSeagull) for the cool name and to [Lorde](https://en.wikipedia.org/wiki/Lorde) for [_Melodrama_](https://en.wikipedia.org/wiki/Melodrama_(Lorde_album))!
