@@ -17,6 +17,9 @@ resetArg = "reset"
 analyseArg :: String
 analyseArg = "analyse"
 
+dumpArg :: String
+dumpArg = "dump"
+
 helpArg :: String
 helpArg = "help"
 
@@ -39,11 +42,17 @@ execArgs ((arg, argparam) : rest) = do
 
         if | arg == resetArg    -> resetConfigDirectory
            | arg == analyseArg  -> do
+                                        when (null argparam) $ die "Please point to a resource for analysis."
                                         absPath <- canonicalizePath argparam
                                         path <- ifJarThenExtractAndGimmeFileName absPath
                                         startpoint path
                                         
            | arg == helpArg     -> putStrLn helpMessage
+           | arg == dumpArg     -> do
+                                        when (null argparam) $ die "Please point to a directory for dumping files."
+                                        absPath <- canonicalizePath argparam
+                                        dumpDatabases absPath
+                                        
            | otherwise          -> die $ "Unknown argument " ++ arg ++ ". Aborting."
         
         execArgs rest
@@ -75,5 +84,9 @@ helpMessage = "\n" ++
               "                                 and empty database if not previously there or resetted\n"++
               "\n"++
               "                                 NOTE : Please attempt to extract and analyse the rt.jar\n"++
-              "                                 file before you analyse anything else.\n"
+              "                                 file before you analyse anything else.\n"++
+              "\n"++
+              " dump=\"/path/to/directory/\"\n"++
+              "                                 Dumps the results of analysis in .yaml files in the directory\n"++
+              "                                 provided in the argument.\n"
                 

@@ -1,7 +1,11 @@
 {-# LANGUAGE OverloadedStrings, DuplicateRecordFields, DeriveGeneric, ScopedTypeVariables #-}
 
 module Etanol.Driver (
-               Config(..), startpoint, resetConfigDirectory, ifJarThenExtractAndGimmeFileName
+               Config(..), 
+               startpoint, 
+               resetConfigDirectory, 
+               ifJarThenExtractAndGimmeFileName,
+               dumpDatabases        
         ) where
 
 import System.Directory (
@@ -28,6 +32,10 @@ import Etanol.Crawler
 import Etanol.Types
 import Etanol.Decompile
 import ByteCodeParser.BasicTypes
+
+fieldsYaml, methodsYaml :: String
+fieldsYaml = "fields.yaml"
+methodsYaml = "methods.yaml"
 
 configName :: FilePath
 configName = ".etanolrc"
@@ -148,8 +156,6 @@ driver config path = do
         
         rcf <- readRawClassFilesInDirectory path
         
-        putStrLn $ "Completed. " ++ (show $ length rcf) ++ " classes loaded."
-        
         (ifDB, imDB) <- getInitialDBs config 
         
         putStrLn "Databases loaded."
@@ -181,8 +187,37 @@ driver config path = do
         
         saveFieldDB config ffDB
         saveMethodDB config fmDB
+        
+        putStrLn $ "Completed. " ++ (show $ length rcf) ++ " classes loaded and analysed."
+
+dumpDatabases :: FilePath -> IO ()
+dumpDatabases path = do
+        
+        exsdir <- doesDirectoryExist path
+        when (not exsdir) $ die "The directory pointed to does not exist!"
+        
+        confDir <- getConfigDirectory
+        
+        initialized <- isInit confDir
+        
+        when (not initialized) $ die "No fields and methods databases, please perform atleast one analysis first."
+        
+        putStrLn $ "Dumping analysis data to " ++ path
+        
+        fDB <- getFieldDB confDir
+        mDB <- getMethodDB confDir
+        
+        let     fieldsYamlPath = path </> fieldsYaml
+                methodsYamlPath = path </> methodsYaml
+                encFields = Y.encode fDB
+                encMethods = Y.encode mDB
+        
+        B.writeFile fieldsYamlPath encFields
+        B.writeFile methodsYamlPath encMethods
+        
         putStrLn "Completed."
         
+
 startpoint :: FilePath -> IO ()
 startpoint path = do
         conf <- getConfigDirectory

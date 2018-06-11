@@ -41,6 +41,7 @@ import Etanol.ControlFlowGraph
 
 import GHC.Generics
 import Data.Serialize
+import qualified Data.Yaml as Y
 
 unsafeHead :: String -> [a] -> a
 unsafeHead err xs = if null xs then (error err) else (head xs)
@@ -92,6 +93,8 @@ data FieldType = Normal | Basic | FinalStatic | UnanalyzableField
 data FieldNullType = NonNullField | NullableField deriving (Show, Eq, Ord, Generic)
 
 instance Serialize FieldType    -- heavylifting done by deriving Generic 
+instance Y.FromJSON FieldType
+instance Y.ToJSON FieldType
 
 data MethodType = Pure | Impure | Local | StrongImpure | UnanalyzableMethod
                         deriving (Show, Eq, Ord, Generic)
@@ -99,6 +102,8 @@ data MethodType = Pure | Impure | Local | StrongImpure | UnanalyzableMethod
 data MethodNullType = NonNullMethod | NullableMethod deriving (Show, Eq, Ord, Generic)
 
 instance Serialize MethodType
+instance Y.FromJSON MethodType
+instance Y.ToJSON MethodType
 
 type FieldDB = M.Map FieldID FieldType
 type MethodDB = M.Map MethodID MethodType
