@@ -6,6 +6,7 @@ import Etanol.Driver
 import Etanol.Analysis
 import Etanol.Types
 
+import System.Directory (canonicalizePath)
 import System.Exit (die)
 import System.Environment
 import Control.Monad
@@ -31,13 +32,17 @@ toArg :: String -> Argument
 toArg s = (z, drop (1 + length z) q)
         where   q = dropWhile (== dashSign) s
                 z = takeWhile (/= equalsSign) q
-
+                
 execArgs :: [Argument] -> IO ()
 execArgs [] = return ()
 execArgs ((arg, argparam) : rest) = do
 
         if | arg == resetArg    -> resetConfigDirectory
-           | arg == analyseArg  -> startpoint argparam
+           | arg == analyseArg  -> do
+                                        absPath <- canonicalizePath argparam
+                                        path <- ifJarThenExtractAndGimmeFileName absPath
+                                        startpoint path
+                                        
            | arg == helpArg     -> putStrLn helpMessage
            | otherwise          -> die $ "Unknown argument " ++ arg ++ ". Aborting."
         
@@ -63,7 +68,8 @@ helpMessage = "\n" ++
               "\n" ++
               " reset                           Resets the config directory listed in .etanolrc\n" ++
               "\n" ++
-              " analyse=\"absolute/path/\"        Analyses recursively all classes in absolute/path/\n"++
+              " analyse=\"/path/to/jar/or/directory\"\n" ++
+              "                                 Analyses recursively all classes in the given path (or jar)\n"++
               "                                 after loading them, and updates the database in the\n"++
               "                                 config directory in .etanolrc. Creates a new .etanolrc\n"++
               "                                 and empty database if not previously there or resetted\n"++

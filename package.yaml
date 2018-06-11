@@ -32,6 +32,7 @@ dependencies:
 - bytecode-parser
 - bytestring >= 0.10.8.2
 - binary >= 0.8.5.1
+
 library:
   source-dirs: src
                 

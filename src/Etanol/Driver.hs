@@ -1,15 +1,23 @@
 {-# LANGUAGE OverloadedStrings, DuplicateRecordFields, DeriveGeneric, ScopedTypeVariables #-}
 
 module Etanol.Driver (
-               Config(..), startpoint, resetConfigDirectory
+               Config(..), startpoint, resetConfigDirectory, ifJarThenExtractAndGimmeFileName
         ) where
 
-import System.Directory (doesDirectoryExist, doesFileExist, createDirectory, removeDirectoryRecursive)
+import System.Directory (
+                        doesDirectoryExist, 
+                        doesFileExist, 
+                        createDirectory, 
+                        removeDirectoryRecursive,
+                        findExecutable
+                        )
 import Control.Monad
 import Data.Maybe
-import Data.Either 
+import Data.Either
+import System.Exit (die)
 import System.FilePath.Posix ((</>))
 import System.Environment (lookupEnv)
+import System.Process (callCommand)
 import qualified GHC.Generics as G
 import qualified Data.ByteString as B
 import qualified Data.Yaml as Y
@@ -23,6 +31,10 @@ import ByteCodeParser.BasicTypes
 
 configName :: FilePath
 configName = ".etanolrc"
+
+jarExtension, unzipCommand :: String
+jarExtension = ".jar"
+unzipCommand = "unzip"
 
 data Config = Config {
                 config_directory :: String
@@ -85,6 +97,29 @@ getConfigDirectory = do
         
         return $ confdir
 
+endsWith :: String -> String -> Bool
+s `endsWith` t = t == reverse (take (length t) (reverse s))
+
+ifJarThenExtractAndGimmeFileName :: FilePath -> IO FilePath
+ifJarThenExtractAndGimmeFileName fp =
+        if (fp `endsWith` jarExtension)
+           then  do
+                        maybeUnzip <- findExecutable unzipCommand
+                        when (isNothing maybeUnzip) $ die "\"unzip\" tool could not be located. Please install it and put in on the PATH."
+                        confDir <- getConfigDirectory
+                        let unzipPath = confDir </> "unzipped"
+                        exs <- doesDirectoryExist unzipPath
+                        when (exs) $ do
+                                putStrLn "Cleaning the previously extracted files.."
+                                removeDirectoryRecursive unzipPath
+                                putStrLn "Completed."
+                        let unzipShell = unzipCommand ++ " " ++ fp ++ " -d " ++ unzipPath
+                        putStrLn "\nExtracting jar files..\n"
+                        callCommand unzipShell
+                        putStrLn "\nDone.\n"
+                        return unzipPath
+           else return fp      
+        
 resetConfigDirectory :: IO ()
 resetConfigDirectory = do
         dir <- getConfigDirectory
