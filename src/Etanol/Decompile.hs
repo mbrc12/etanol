@@ -23,7 +23,6 @@ module Etanol.Decompile
     ) where
 
 import Data.Binary (Word16, Word32, Word8)
-import Debug.Trace (trace)
 
 import ByteCodeParser.BasicTypes
 import ByteCodeParser.Instructions

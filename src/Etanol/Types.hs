@@ -9,8 +9,8 @@ module Etanol.Types
     , getClassName
     , FieldType(..)
     , MethodType(..)
-    , FieldNullType(..)
-    , MethodNullType(..)
+    , FieldNullabilityType(..)
+    , MethodNullabilityType(..)
     , FieldName
     , MethodName
     , isInit
@@ -47,7 +47,6 @@ import qualified Data.Map.Strict as M
 import Data.Map.Strict ((!), (!?))
 
 import qualified Data.ByteString as B
-import Debug.Trace (trace)
 import System.Directory (doesFileExist)
 import System.Exit (die)
 import System.FilePath.Posix ((</>))
@@ -62,6 +61,8 @@ import Etanol.ControlFlowGraph
 import Data.Serialize
 import qualified Data.Yaml as Y
 import GHC.Generics
+
+import EtanolTools.Unsafe
 
 unsafeHead :: String -> [a] -> a
 unsafeHead err xs =
@@ -125,9 +126,11 @@ data FieldType
     | UnanalyzableField
     deriving (Show, Eq, Ord, Generic)
 
-data FieldNullType
-    = NonNullField
-    | NullableField
+data FieldNullabilityType
+    = NullableField
+    | NonNullableField
+    | UndecidedField
+    | UnanalyzableNullField
     deriving (Show, Eq, Ord, Generic)
 
 instance Serialize FieldType -- heavylifting done by deriving Generic 
@@ -144,9 +147,11 @@ data MethodType
     | UnanalyzableMethod
     deriving (Show, Eq, Ord, Generic)
 
-data MethodNullType
-    = NonNullMethod
-    | NullableMethod
+data MethodNullabilityType
+    = NullableMethod
+    | NonNullableMethod
+    | UndecidedMethod
+    | UnanalyzableNullMethod
     deriving (Show, Eq, Ord, Generic)
 
 instance Serialize MethodType
@@ -238,7 +243,7 @@ getMethod className methodInfo =
             findCodeAttribute $ attributes (methodInfo :: MethodInfo)
         methodCFG = generateControlFlowGraph methodCode
         methodAccessFlags = accessFlags (methodInfo :: MethodInfo)
-     in trace ("Reading method: " ++ methodName) $
+     in debugLogger ("Reading method: " ++ methodName) $
         ( (methodName, methodDescriptor)
         , methodCode
         , methodCFG
@@ -264,7 +269,7 @@ getField className fieldInfo =
             adjoinClassName className $ name (fieldInfo :: FieldInfo)
         fieldDesc :: String = descriptor (fieldInfo :: FieldInfo)
         fieldAccessFlags = accessFlags (fieldInfo :: FieldInfo)
-     in trace ("Reading field: " ++ fieldName) $
+     in debugLogger ("Reading field: " ++ fieldName) $
         ((fieldName, fieldDesc), fieldAccessFlags)
 
 getFields :: RawClassFile -> [NamedField]

@@ -40,7 +40,6 @@ import Data.List
 import Data.Map.Strict ((!), (!?))
 import qualified Data.Map.Strict as M
 import Data.Maybe
-import Debug.Trace (trace)
 
 import ByteCodeParser.BasicTypes
 import ByteCodeParser.Instructions
@@ -50,6 +49,8 @@ import Etanol.Decompile
 import Etanol.MonadFX
 import Etanol.Types
 
+import EtanolTools.Unsafe
+
 type NamePrefix = String -- prefixes of strings, anynames
 
 type AnyName = String
@@ -57,14 +58,11 @@ type AnyName = String
 tHRESHOLD :: Int
 tHRESHOLD = 50
 
-traceM :: (Monad m) => String -> m ()
-traceM x = trace x $ return ()
-
 -- unq returns the unique elements of the list, provided they are orderable
 unq = map (unsafeHead "unq") . group . sort
 
 initialStrongImpureList :: [NamePrefix]
-initialStrongImpureList =
+initialStrongImpureList = 
     [ "java.io"
     , "java.net"
     , "javax.swing"
@@ -300,7 +298,7 @@ analyseAll cmap loadedThings loadedThingsStatus fDB mDB =
                          fDB
                          mDB
                          thing
-              in trace
+              in debugLogger
                      ("LoadedThingsStatus: " ++
                       (show $ M.size loadedThingsStatus)) $
                  analyseAll cmap loadedThings loadedThingsStatus' fDB' mDB'
@@ -322,7 +320,7 @@ analysisDriver ::
 analysisDriver cmap cpool loadedThings loadedThingsStatus fDB mDB thing -- thing is guaranteed to be in loadedThings 
  =
     let thingdata =
-            trace ("Here" ++ show (loadedThings !? thing)) $
+            debugLogger ("Here" ++ show (loadedThings !? thing)) $
             loadedThings ! thing
      in if isField thing
             then ( M.delete thing loadedThingsStatus
@@ -334,7 +332,7 @@ analysisDriver cmap cpool loadedThings loadedThingsStatus fDB mDB thing -- thing
                         --                              analyzable in this setting
                         -- NOTE : analyseField can be called with just the cpool as it doesn't need anything else for
                         -- recursive analysis.
-            else trace ("Analyzing " ++ show thing) $
+            else debugLogger ("Analyzing " ++ show thing) $
                  if (loadedThingsStatus ! thing) == Analyzing -- found loop
                      then let mID = methodID thing
                               mDB' = M.insert mID UnanalyzableMethod mDB
@@ -426,13 +424,13 @@ analyseMethod cmap cpool loadedThings loadedThingsStatus fDB mDB thing =
         nAl = mNAl ++ fNAl
         nA = filter (\x -> M.notMember x loadedThings) nAl
                         -- not previously analyzed and also not loaded, but required for analysis
-     in trace
+     in debugLogger
             ("Constant pool : " ++
              (if (cpool == getConstantPoolForThing cmap thing)
                   then "OK"
                   else error "Constant pool is WRONG!")) $
         if (AMNative `elem` af ||
-            AMSynchronized `elem` af || AMVarargs `elem` af || null mCode)
+            AMSynchronized `elem` af || null mCode) -- || AMVarargs `elem` af || null mCode)
                         -- These identifiers enable immediate disqualification or if Code is empty implying an abstract method
             then (loadedThingsStatus, fDB, M.insert mID UnanalyzableMethod mDB)
             else if isInitialStrongImpure mName
@@ -845,6 +843,7 @@ Local and pure method may only return Fresh References or BasicTypes otherwise, 
 
 Also if pure functions return references, they must be fresh and not any of the referenced params
 --}
+
 analyseAtom :: Int -> CodeAtom -> LocalHeap -> Stack -> AnalysisM MethodType
 analyseAtom j (pos, []) loc stk = return Pure
 analyseAtom j (pos, ca@(op:rest)) loc stk

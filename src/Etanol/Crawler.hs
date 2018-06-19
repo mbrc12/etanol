@@ -12,7 +12,6 @@ import ByteCodeParser.Reader (readRawClassFile)
 import Control.Applicative ((<*>), pure)
 import Control.Monad (filterM, mapM)
 import Data.List (isSuffixOf)
-import Debug.Trace (trace)
 import System.Directory (doesDirectoryExist, doesFileExist, listDirectory)
 import System.FilePath.Posix ((</>))
 
