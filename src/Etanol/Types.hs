@@ -21,6 +21,10 @@ module Etanol.Types
     , saveMethodDB
     , getMethodDB
     , getFieldDB
+    , saveFieldDB_null
+    , saveMethodDB_null
+    , getMethodDB_null
+    , getFieldDB_null
     , FieldDB(..)
     , MethodDB(..)
     , NamedMethodCode(..)
@@ -75,10 +79,14 @@ unsafeHead err xs =
 getClassName :: String -> String
 getClassName = reverse . tail . dropWhile (/= '.') . reverse
 
-fieldsFile, methodsFile :: FilePath
+fieldsFile, methodsFile, fieldsNullFile, methodsNullFile :: FilePath
 fieldsFile = "fields.db"
 
 methodsFile = "methods.db"
+
+fieldsNullFile = "fields_nullability.db"
+
+methodsNullFile = "methods_nullability.db"
 
 firstof2 :: (a, b) -> a
 firstof2 (a, b) = a
@@ -186,18 +194,29 @@ isInit :: FilePath -> IO Bool
 isInit configLocation =
     let fieldDBPath = configLocation </> fieldsFile
         methodDBPath = configLocation </> methodsFile
+        n_fieldDBPath = configLocation </> fieldsNullFile
+        n_methodDBPath = configLocation </> methodsNullFile
+
      in do finit <- doesFileExist fieldDBPath
            minit <- doesFileExist methodDBPath
-           return $ finit && minit
+           nfinit <- doesFileExist n_fieldDBPath
+           nminit <- doesFileExist n_methodDBPath
+           return $ finit && minit && nfinit && nminit
 
 initDB :: FilePath -> IO ()
 initDB configLocation =
     let fieldDBpath = configLocation </> fieldsFile
         methodDBpath = configLocation </> methodsFile
+        n_methodDBpath = configLocation </> methodsNullFile
+        n_fieldDBpath = configLocation </> fieldsNullFile
         fieldS = encode (M.empty :: FieldDB)
         methodS = encode (M.empty :: MethodDB)
+        n_fieldS = encode (M.empty :: FieldNullabilityDB)
+        n_methodS = encode (M.empty :: MethodNullabilityDB)
      in do B.writeFile fieldDBpath fieldS
            B.writeFile methodDBpath methodS
+           B.writeFile n_fieldDBpath n_fieldS
+           B.writeFile n_methodDBpath n_methodS
 
 getFieldDB :: FilePath -> IO FieldDB
 getFieldDB configLocation =
@@ -228,6 +247,39 @@ saveMethodDB configLocation map =
     let methodDBPath = configLocation </> methodsFile
         bs = encode map
      in do B.writeFile methodDBPath bs
+
+getFieldDB_null :: FilePath -> IO FieldNullabilityDB
+getFieldDB_null configLocation =
+    let n_fieldDBPath = configLocation </> fieldsNullFile
+     in do bs <- B.readFile n_fieldDBPath
+           let dec = decode bs
+           case dec of
+               Right map -> return map
+               Left _ -> die "Invalid field database file!"
+
+getMethodDB_null :: FilePath -> IO MethodNullabilityDB
+getMethodDB_null configLocation =
+    let n_methodDBPath = configLocation </> methodsNullFile
+     in do bs <- B.readFile n_methodDBPath
+           let dec = decode bs
+           case dec of
+               Right map -> return map
+               Left _ -> die "Invalid method database file!"
+
+saveFieldDB_null :: FilePath -> FieldNullabilityDB -> IO ()
+saveFieldDB_null configLocation map =
+    let n_fieldDBPath = configLocation </> fieldsNullFile
+        bs = encode map
+     in do B.writeFile n_fieldDBPath bs
+
+saveMethodDB_null :: FilePath -> MethodNullabilityDB -> IO ()
+saveMethodDB_null configLocation map =
+    let n_methodDBPath = configLocation </> methodsNullFile
+        bs = encode map
+     in do B.writeFile n_methodDBPath bs
+
+
+
 
 adjoinClassName :: ClassName -> String -> MethodName
 adjoinClassName x y = x ++ "." ++ y

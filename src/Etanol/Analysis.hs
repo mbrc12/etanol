@@ -285,14 +285,16 @@ analyseAll ::
     -> LoadedThings
     -> LoadedThingsStatus
     -> FieldDB
-    -> MethodDB -- old  
-    -> (LoadedThingsStatus, FieldDB, MethodDB) -- new values
-analyseAll cmap loadedThings loadedThingsStatus fDB mDB =
+    -> MethodDB -- old 
+    -> FieldNullabilityDB
+    -> MethodNullabilityDB
+    -> (LoadedThingsStatus, FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB) -- new values
+analyseAll cmap loadedThings loadedThingsStatus fDB mDB n_fDB n_mDB =
     if M.null loadedThingsStatus
-        then (loadedThingsStatus, fDB, mDB)
+        then (loadedThingsStatus, fDB, mDB, n_fDB, n_mDB)
         else let (thing, _) = M.elemAt 0 loadedThingsStatus
                  cpool = getConstantPoolForThing cmap thing
-                 (loadedThingsStatus', fDB', mDB') =
+                 (loadedThingsStatus', fDB', mDB', n_fDB', n_mDB') =
                      analysisDriver
                          cmap
                          cpool
@@ -300,11 +302,13 @@ analyseAll cmap loadedThings loadedThingsStatus fDB mDB =
                          loadedThingsStatus
                          fDB
                          mDB
+                         n_fDB
+                         n_mDB
                          thing
               in debugLogger
                      ("LoadedThingsStatus: " ++
                       (show $ M.size loadedThingsStatus)) $
-                 analyseAll cmap loadedThings loadedThingsStatus' fDB' mDB'
+                 analyseAll cmap loadedThings loadedThingsStatus' fDB' mDB' n_fDB' n_mDB'
 
 toRepr :: AnyID -> String
 toRepr (EFieldID f) = " Field " ++ (fst f) ++ ":" ++ (snd f)
@@ -318,9 +322,11 @@ analysisDriver ::
     -> LoadedThingsStatus
     -> FieldDB
     -> MethodDB -- olds
+    -> FieldNullabilityDB
+    -> MethodNullabilityDB
     -> AnyID -- target  
-    -> (LoadedThingsStatus, FieldDB, MethodDB) -- new values
-analysisDriver cmap cpool loadedThings loadedThingsStatus fDB mDB thing -- thing is guaranteed to be in loadedThings 
+    -> (LoadedThingsStatus, FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB) -- new values
+analysisDriver cmap cpool loadedThings loadedThingsStatus fDB mDB n_fDB n_mDB thing -- thing is guaranteed to be in loadedThings 
  =
     let thingdata =
             debugLogger ("Here" ++ show (loadedThings !? thing)) $
@@ -328,7 +334,9 @@ analysisDriver cmap cpool loadedThings loadedThingsStatus fDB mDB thing -- thing
      in if isField thing
             then ( M.delete thing loadedThingsStatus
                  , analyseField cpool loadedThings fDB thing
-                 , mDB)
+                 , mDB
+                 , analyseField_null cpool loadedThings n_fDB thing
+                 , n_mDB)
                         -- delete object                get the changed field                   old method db works
                         --                              note that we do not pass the current
                         --                              statuses to field analysis as fields are always
@@ -339,11 +347,12 @@ analysisDriver cmap cpool loadedThings loadedThingsStatus fDB mDB thing -- thing
                  if (loadedThingsStatus ! thing) == Analyzing -- found loop
                      then let mID = methodID thing
                               mDB' = M.insert mID UnanalyzableMethod mDB
-                           in (M.delete thing loadedThingsStatus, fDB, mDB')
+                              n_mDB' = M.insert mID UnanalyzableNullMethod n_mDB
+                           in (M.delete thing loadedThingsStatus, fDB, mDB', n_fDB, n_mDB')
                      else let mID = methodID thing
                               loadedThingsStatus' =
                                   M.insert thing Analyzing loadedThingsStatus
-                              (loadedThingsStatus'', fDB', mDB') =
+                              (loadedThingsStatus'', fDB', mDB', n_fDB', n_mDB') =
                                   analyseMethod
                                       cmap
                                       cpool
@@ -351,11 +360,13 @@ analysisDriver cmap cpool loadedThings loadedThingsStatus fDB mDB thing -- thing
                                       loadedThingsStatus'
                                       fDB
                                       mDB
+                                      n_fDB
+                                      n_mDB
                                       thing
                                                                         -- However you need to pass cmap here as it can recursively analyse
                                                                         -- other stuff
                                     --trace(toRepr thing ++ " => " ++ show (mDB' ! mID)) 
-                           in (M.delete thing loadedThingsStatus'', fDB', mDB')
+                           in (M.delete thing loadedThingsStatus'', fDB', mDB', n_fDB', n_mDB')
 
 isBasic :: FieldDescriptor -> Bool
 isBasic "" = error "Empty field descriptor!"
@@ -374,6 +385,23 @@ analyseField cpool loadedThings fDB thing =
                          else Normal
      in M.insert fID verdict fDB
 
+analyseField_null :: [ConstantInfo] -> LoadedThings -> FieldNullabilityDB -> AnyID -> FieldNullabilityDB
+analyseField_null cpool loadedThings n_fDB thing =
+    let fID = fieldID thing
+        ((_, fDesc), fAccessFlags) = fieldData (loadedThings ! thing)
+        verdict =
+            if (AFFinal `elem` fAccessFlags) && (AFStatic `elem` fAccessFlags)
+                then NonNullableField       -- first approximation,
+                                            -- final static reference fields
+                                            -- are not necessarily nonnull
+                                            -- but this is currently used.
+                else if isBasic fDesc
+                         then NonNullableField  -- basic fields are nonnull
+                         else NullableField     -- otherwise for safety mark 
+                                                -- nullable
+     in M.insert fID verdict n_fDB
+
+
 -- | Feeding mechanism through the analysisDriver. See `analyseMethod`
 feedAll ::
        CPoolMap
@@ -381,11 +409,13 @@ feedAll ::
     -> LoadedThingsStatus
     -> FieldDB
     -> MethodDB
+    -> FieldNullabilityDB
+    -> MethodNullabilityDB
     -> [AnyID]
-    -> (LoadedThingsStatus, FieldDB, MethodDB)
-feedAll _ _ loadedThingsStatus fDB mDB [] = (loadedThingsStatus, fDB, mDB)
-feedAll cmap loadedThings loadedThingsStatus fDB mDB (aID:rest) =
-    let (lth', fdb', mdb') =
+    -> (LoadedThingsStatus, FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB)
+feedAll _ _ loadedThingsStatus fDB mDB n_fDB n_mDB [] = (loadedThingsStatus, fDB, mDB, n_fDB, n_mDB)
+feedAll cmap loadedThings loadedThingsStatus fDB mDB n_fDB n_mDB (aID:rest) =
+    let (lth', fdb', mdb', n_fdb', n_mdb') =
             if M.member aID loadedThingsStatus
                 then analysisDriver
                          cmap
@@ -394,10 +424,12 @@ feedAll cmap loadedThings loadedThingsStatus fDB mDB (aID:rest) =
                          loadedThingsStatus
                          fDB
                          mDB
+                         n_fDB
+                         n_mDB
                          aID
                                                 -- this is why you need the cmap to analyseMethod, as it can recursively call this.
-                else (loadedThingsStatus, fDB, mDB)
-     in feedAll cmap loadedThings lth' fdb' mdb' rest
+                else (loadedThingsStatus, fDB, mDB, n_fDB, n_mDB)
+     in feedAll cmap loadedThings lth' fdb' mdb' n_fdb' n_mdb' rest
 
 -- checks properties for method
 -- currently no recursive method is analyzed to be pure
@@ -408,9 +440,11 @@ analyseMethod ::
     -> LoadedThingsStatus
     -> FieldDB
     -> MethodDB
+    -> FieldNullabilityDB
+    -> MethodNullabilityDB
     -> AnyID
-    -> (LoadedThingsStatus, FieldDB, MethodDB)
-analyseMethod cmap cpool loadedThings loadedThingsStatus fDB mDB thing =
+    -> (LoadedThingsStatus, FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB)
+analyseMethod cmap cpool loadedThings loadedThingsStatus fDB mDB n_fDB n_mDB thing =
     let mID = methodID thing
         mName = fst mID
         mDes = snd mID
@@ -438,22 +472,29 @@ analyseMethod cmap cpool loadedThings loadedThingsStatus fDB mDB thing =
                         -- VarArg check, see GSoC Phase 2 goals
                         -- These identifiers enable immediate disqualification 
                         -- or if Code is empty implying an abstract method
-            then (loadedThingsStatus, fDB, M.insert mID UnanalyzableMethod mDB)
+            then (loadedThingsStatus, fDB, M.insert mID UnanalyzableMethod mDB, 
+                    n_fDB, M.insert mID UnanalyzableNullMethod n_mDB)
             else if isInitialStrongImpure mName
                      then ( loadedThingsStatus
                           , fDB
-                          , M.insert mID StrongImpure mDB)
+                          , M.insert mID StrongImpure mDB
+                          , n_fDB
+                          , M.insert mID NullableMethod n_mDB)
                      else if nonEmpty nA
                               then ( loadedThingsStatus
                                    , fDB
-                                   , M.insert mID UnanalyzableMethod mDB)
-                              else let (loadedThingsStatus', fDB', mDB') =
+                                   , M.insert mID UnanalyzableMethod mDB
+                                   , n_fDB
+                                   , M.insert mID UnanalyzableNullMethod n_mDB )
+                              else let (loadedThingsStatus', fDB', mDB', n_fDB', n_mDB') =
                                            feedAll
                                                cmap
                                                loadedThings
                                                loadedThingsStatus
                                                fDB
                                                mDB
+                                               n_fDB
+                                               n_mDB
                                                nAl
                                                                                 -- here you call feedAll with cmap
                                         -- after this all deps of this method is not in loadedThingsStatus, as they have all been analyzed
@@ -492,8 +533,9 @@ analyseMethod cmap cpool loadedThings loadedThingsStatus fDB mDB thing =
                                                     replaceRefWithNull
                                                         (SReference _) = 
                                                             NSNullable
-                                                    replaceRefWithNull _ = 
-                                                            NSNonNullable
+                                                    replaceRefWithNull
+                                                        SBasicLong = 
+                                                            NSNonNullableLong
 
                                                     lh_null = 
                                                         M.map 
@@ -502,11 +544,11 @@ analyseMethod cmap cpool loadedThings loadedThingsStatus fDB mDB thing =
                                                             
                                                     lhp = [lh']
                                                     lhp_null = [lh_null]
-                                                    initialState =
+                                                    initialState = 
                                                         AnalysisBundle
                                                             cpool
-                                                            mDB
-                                                            fDB
+                                                            mDB'
+                                                            fDB'
                                                             mCFG
                                                             lhp
                                                             [[]]
@@ -516,14 +558,29 @@ analyseMethod cmap cpool loadedThings loadedThingsStatus fDB mDB thing =
                                                         resultant
                                                             getAnalysis
                                                             initialState
-                                                    {--
-                                                    (finalState', verdict') =
+                                                    
+
+                                                    initialState_null = 
+                                                        NullAnalysisBundle
+                                                            mID
+                                                            cpool
+                                                            n_mDB'
+                                                            n_fDB'   
+                                                            mCFG
+                                                            lhp_null
+                                                            [[]]
+                                                            [theStart]
+                                                    (finalState_null, verdict_null) =
                                                         resultant
-                                                            getAnalysisNull
+                                                            getAnalysis_null
                                                             initialState_null
-                                                    --}
-                                                    fDB' = fieldDB finalState
-                                                    mDB' = methodDB finalState
+                                                    
+
+                                                    fDB'' = fieldDB finalState
+                                                    mDB'' = methodDB finalState
+                                                    n_fDB'' = n_fieldDB finalState_null
+                                                    n_mDB'' = n_methodDB finalState_null
+
                                                     mut =
                                                         unq $
                                                         concat
@@ -534,12 +591,19 @@ analyseMethod cmap cpool loadedThings loadedThingsStatus fDB mDB thing =
                                                            (not $ null mut)
                                                             then Local
                                                             else verdict
-                                                 in ( loadedThingsStatus'
-                                                    , fDB'
-                                                    , M.insert mID fin mDB')
+                                                        
+                                                 in ( loadedThingsStatus' -- can safely leave this like this without 
+                                                                          -- deleting this method as the caller
+                                                                          -- analysisDriver deletes it anyway.
+                                                    , fDB''
+                                                    , M.insert mID fin mDB''
+                                                    , n_fDB''
+                                                    , M.insert mID verdict_null n_mDB'' )
                                            else ( loadedThingsStatus'
                                                 , fDB'
-                                                , mDB')
+                                                , mDB'
+                                                , n_fDB'
+                                                , n_mDB' )
 
 -- analyze method for type when all its dependencies are met
 ----------------------------------------------------------------------
@@ -601,7 +665,7 @@ getMutations cpool mDB cfg = undefined --stepThrough cpool mDB cfg theStart
 --}
 data StackObject
     = SBasic
-    | SBasicLong
+    | SBasicLong            -- Category 2, needed for analyseAtom
     | SReference Int
     | SReferenceFresh
     | SObjArrayReference
@@ -610,6 +674,7 @@ data StackObject
 data NStackObject
     = NSNullable
     | NSNonNullable
+    | NSNonNullableLong     -- Category 2, needed for analyseAtom_null
     deriving (Eq, Show)
 
 type Stack = [StackObject] -- elements added at the beginning
@@ -714,43 +779,115 @@ data AnalysisBundle = AnalysisBundle
     , mutDB :: [MutLocs]
     } deriving (Show)
 
+data NullAnalysisBundle = NullAnalysisBundle 
+    { n_methodName :: MethodID 
+    , n_cpool :: [ConstantInfo]
+    , n_methodDB :: MethodNullabilityDB
+    , n_fieldDB :: FieldNullabilityDB
+    , n_cfg :: CFG
+    , n_lHeaps :: NLocalHeaps
+    , n_stacks :: NStacks
+    , n_cpos :: [Int]
+    } deriving (Show)
+
 type AnalysisM = FX AnalysisBundle MethodType -- the analysis monad
+type NAnalysisM = FX NullAnalysisBundle MethodNullabilityType
 
 getCpool :: AnalysisM [ConstantInfo]
 getCpool = pure cpool <*> getS
 
+getCpool_null :: NAnalysisM [ConstantInfo]
+getCpool_null = pure n_cpool <*> getS
+
 getMDB :: AnalysisM MethodDB
 getMDB = pure methodDB <*> getS
+
+getMDB_null :: NAnalysisM MethodNullabilityDB
+getMDB_null = pure n_methodDB <*> getS
 
 getFDB :: AnalysisM FieldDB
 getFDB = pure fieldDB <*> getS
 
+getFDB_null :: NAnalysisM FieldNullabilityDB
+getFDB_null = pure n_fieldDB <*> getS
+
 getCfg :: AnalysisM CFG
 getCfg = pure cfg <*> getS
+
+getCfg_null :: NAnalysisM CFG
+getCfg_null = pure n_cfg <*> getS
 
 getStacks :: AnalysisM Stacks
 getStacks = pure stacks <*> getS
 
+getStacks_null :: NAnalysisM NStacks
+getStacks_null = pure n_stacks <*> getS
+
 getLocalHeaps :: AnalysisM LocalHeaps
 getLocalHeaps = pure lHeaps <*> getS
+
+getLocalHeaps_null :: NAnalysisM NLocalHeaps
+getLocalHeaps_null = pure n_lHeaps <*> getS
 
 getCPos :: AnalysisM [Int]
 getCPos = pure cpos <*> getS
 
+getCPos_null :: NAnalysisM [Int]
+getCPos_null = pure n_cpos <*> getS
+
 setCPos :: [Int] -> AnalysisM ()
 setCPos z = do
+    {--
     AnalysisBundle a b c d e f _ g <- getS
     putS $ AnalysisBundle a b c d e f z g
+    --}
+    curAB <- getS
+    putS $ curAB {
+        cpos = z
+    }
+
+setCPos_null :: [Int] -> NAnalysisM ()
+setCPos_null z = do
+    curNAB <- getS
+    putS $ curNAB {
+        n_cpos = z
+    }
 
 setStacks :: Stacks -> AnalysisM ()
 setStacks stks = do
+    {--
     AnalysisBundle a b c d e _ f g <- getS
     putS $ AnalysisBundle a b c d e stks f g
+    --}
+    curAB <- getS
+    putS $ curAB {
+        stacks = stks
+    }
+
+setStacks_null :: NStacks -> NAnalysisM ()
+setStacks_null stks = do
+    curNAB <- getS
+    putS $ curNAB {
+        n_stacks = stks
+    }
 
 setLocalHeaps :: LocalHeaps -> AnalysisM ()
 setLocalHeaps lheaps = do
+    {-- 
     AnalysisBundle a b c d _ f g h <- getS
     putS $ AnalysisBundle a b c d lheaps f g h
+    --}
+    curAB <- getS
+    putS $ curAB {
+        lHeaps = lheaps
+    }
+
+setLocalHeaps_null :: NLocalHeaps -> NAnalysisM ()
+setLocalHeaps_null lheaps = do
+    curNAB <- getS
+    putS $ curNAB {
+        n_lHeaps = lheaps
+    }
 
 replaceElem :: [a] -> Int -> a -> [a]
 replaceElem xs p v = take p xs ++ [v] ++ drop (p + 1) xs
@@ -759,8 +896,21 @@ replaceElem xs p v = take p xs ++ [v] ++ drop (p + 1) xs
 stackOperate :: Stack -> (Int, Int) -> Stack
 stackOperate stk (inp, outp) =
     if length stk < inp
-        then error "Stack is smaller than number of inputs required"
+        then error "stackOperate : Stack is smaller than number of inputs required"
         else replicate outp SBasic ++ drop inp stk
+
+stackOperate_null :: NStack -> (Int, Int) -> NStack
+stackOperate_null stk (inp, outp) =
+    if length stk < inp
+        then error "stackOperate_null : Stack is smaller than number of inputs required"
+        else replicate outp NSNonNullable ++ drop inp stk
+
+stackOperateL_null :: NStack -> (Int, Int) -> NStack
+stackOperateL_null stk (inp, outp) =
+    if length stk < inp
+        then error "stackOperateL_null : Stack is smaller than number of inputs required"
+        else replicate outp NSNonNullableLong ++ drop inp stk
+
 
 -- remove anything but adds long things
 stackOperateL :: Stack -> (Int, Int) -> Stack
@@ -771,33 +921,80 @@ stackOperateL stk (inp, outp) =
 
 setStackPos :: Int -> Stack -> AnalysisM ()
 setStackPos pos stk = do
+    {--
     AnalysisBundle a b c d e f g h <- getS
     putS $ AnalysisBundle a b c d e (replaceElem f pos stk) g h
+    --}
+    
+    curAB <- getS
+    let f = stacks curAB
+    putS $ curAB {
+        stacks = replaceElem f pos stk
+    }
+
+setStackPos_null :: Int -> NStack -> NAnalysisM ()
+setStackPos_null pos stk = do
+    curNAB <- getS
+    let f = n_stacks curNAB
+    putS $ curNAB {
+        n_stacks = replaceElem f pos stk
+    }
 
 setLocalHeapPos :: Int -> LocalHeap -> AnalysisM ()
 setLocalHeapPos pos lheap = do
+    {--
     AnalysisBundle a b c d e f g h <- getS
     putS $ AnalysisBundle a b c d (replaceElem e pos lheap) f g h
+    --}
+    
+    curAB <- getS
+    let e = lHeaps curAB
+    putS $ curAB {
+        lHeaps = replaceElem e pos lheap
+    }
+
+setLocalHeapPos_null :: Int -> NLocalHeap -> NAnalysisM ()
+setLocalHeapPos_null pos lheap = do
+    curNAB <- getS
+    let e = n_lHeaps curNAB
+    putS $ curNAB {
+            n_lHeaps = replaceElem e pos lheap
+    }
 
 getLocalHeapElem :: LocalHeap -> Int -> StackObject
 getLocalHeapElem loc pos = loc ! pos -- error if does not exist
 
+getLocalHeapElem_null :: NLocalHeap -> Int -> NStackObject
+getLocalHeapElem_null loc pos = loc ! pos
+
 localHeapOperate :: LocalHeap -> Int -> StackObject -> LocalHeap
 localHeapOperate loc pos obj = M.insert pos obj loc
+
+localHeapOperate_null :: NLocalHeap -> Int -> NStackObject -> NLocalHeap
+localHeapOperate_null loc pos obj = M.insert pos obj loc
 
 getMuts :: AnalysisM [MutLocs]
 getMuts = pure mutDB <*> getS
 
 setMuts :: [MutLocs] -> AnalysisM ()
 setMuts ms = do
+    {--
     AnalysisBundle a b c d e f g _ <- getS
     putS $ AnalysisBundle a b c d e f g ms
+    --}
+    curAB <- getS
+    putS $ curAB {
+        mutDB = ms
+    }
 
 -- add a mutation location to a specific instance
 addMut :: Int -> Int -> AnalysisM ()
 addMut pos v = do
     mutl <- getMuts
     setMuts $ replaceElem mutl pos (v : (mutl !! pos))
+
+getMethodName_null :: NAnalysisM MethodID
+getMethodName_null = pure n_methodName <*> getS
 
 consumeCode :: AnalysisM [CodeAtom] -- code bytes
 consumeCode = do
@@ -818,6 +1015,24 @@ consumeCode = do
     setMuts $ map fourthof4 q
     return $ map (nodecode . fromJust . lab g) $ np
 
+consumeCode_null :: NAnalysisM [CodeAtom]
+consumeCode_null = do
+    g <- getCfg_null
+    p <- getCPos_null
+    stk <- getStacks_null
+    loc <- getLocalHeaps_null
+    let q =
+            concatMap
+                (\(l, s, c) ->
+                     zip3 (repeat l) (repeat s) (suc g c)) $
+            zip3 loc stk p
+    let np = map thirdof3 q
+    setCPos_null np
+    setLocalHeaps_null $ map firstof3 q
+    setStacks_null $ map secondof3 q
+    return $ map (nodecode . fromJust . lab g) $ np
+
+
 getAnalysis :: AnalysisM MethodType
 getAnalysis = do
     cas <- consumeCode
@@ -829,11 +1044,32 @@ getAnalysis = do
         forM [0 .. length cas - 1] $ \j ->
             exceptify $ analyseAtom j (cas !! j) (locs !! j) (stks !! j)
     mutl <- getMuts
+
     whenExit (length results > tHRESHOLD) UnanalyzableMethod -- too many branches
     whenExit (UnanalyzableMethod `elem` results) UnanalyzableMethod
     whenExit (StrongImpure `elem` results) StrongImpure
     whenExit (Impure `elem` results) Impure
+
     getAnalysis
+
+
+getAnalysis_null :: NAnalysisM MethodNullabilityType
+getAnalysis_null = do
+    cas <- consumeCode_null
+    pos <- getCPos_null
+    whenExit (all (== theEnd) pos) NonNullableMethod
+    stks <- getStacks_null
+    locs <- getLocalHeaps_null
+
+    results <-
+        forM [0 .. length cas - 1] $ \j ->
+            exceptify $ analyseAtom_null j (cas !! j) (locs !! j) (stks !! j)
+
+    whenExit (length results > tHRESHOLD) UnanalyzableNullMethod
+    whenExit (UnanalyzableNullMethod `elem` results) UnanalyzableNullMethod
+    whenExit (NullableMethod `elem` results) NullableMethod
+
+    getAnalysis_null
 
 -- position of this in the param list
 thisPos :: Int
@@ -1135,6 +1371,65 @@ analyseAtom j (pos, ca@(op:rest)) loc stk
                                   error "Unknown return type from method!"
     return Pure
 
+
+basicReturns, basicLoads, basicLoadsL :: [Word8]
+
+basicReturns = [172..175] ++ [177] -- returns basic things
+basicLoads = [2..8] ++ [11..13] ++ [16..17] ++ [21, 23] ++ [26..29] ++ 
+             [34..37] ++ 
+             [46, 48, 51, 52, 53]
+                                            -- arrays are considered nonnull
+                                            -- if some loading is being done
+                                            -- from them
+             []
+
+basicLoadsL = ([2..17] ++ [21..24] ++ [26..41] ++ [46..49] ++ [51..53])
+                \\ basicLoads
+
+
+
+analyseAtom_null :: Int -> CodeAtom -> NLocalHeap -> NStack -> NAnalysisM MethodNullabilityType
+analyseAtom_null j (pos, []) loc stk = return NonNullableMethod
+analyseAtom_null j (pos, ca@(op:rest)) loc stk = do
+    whenExit (op == monitorEnterOp || 
+              op == monitorExitOp  ||
+              op == invokeInterfaceOp ||
+              op == invokeDynamicOp)
+    UnanalyzableNullMethod
+
+    whenExit (op == 0) NonNullableMethod -- nop => this thread is not nullable
+
+    whenExit (op == wideOp) UnanalyzableNullMethod
+    whenExit (op == aThrowOp) UnanalyzableNullMethod
+
+    cpool <- getCpool_null
+    n_fDB <- getFDB_null
+    n_mDB <- getMDB_null
+
+    whenExit (op == areturnOp) $
+        let topelem = unsafeHead "Return from analyseAtom_null" stk
+        in  if topelem == NSNullable
+            then NullableMethod
+            else NonNullableMethod -- dont worry about other threads
+                                   -- the current thread says this.
+                                   -- that merging of data is done
+                                   -- by getAnalysis_null
+    
+    whenExit (op `elem` basicReturns) NonNullableMethod
+        -- op codes that return basic stuff is always nonnullable
+        -- void is nonnullable in particular 
+    
+    when (op `elem` basicLoads) $
+        setStackPos_null j (NSNonNullable : stk)  
+                                             -- basic loads only add
+                                             -- non nullable stuff
+                                             -- to the stack
+    when (op `elem` basicLoadsL) $ 
+        setStackPos_null j (NSNonNullableLong : stk)
+                                            -- Category 2 stuff but same
+                                            -- as above.
+     
+ 
 data ObjectField
     = OFBasic
     | OFBasicLong
@@ -1169,6 +1464,10 @@ getReturnType (_, des) =
            | otherwise ->
                error $
                "Unknown return type for method with descriptor : " ++ show des
+
+isCat2_null :: NStackObject -> Bool
+isCat2_null NSNonNullableLong = True
+isCat2_null _ = False
 
 isCat2 :: StackObject -> Bool
 isCat2 SBasicLong = True
