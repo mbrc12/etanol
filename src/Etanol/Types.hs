@@ -1,9 +1,9 @@
 {-# LANGUAGE DeriveGeneric, DefaultSignatures, OverloadedStrings,
   ScopedTypeVariables, DuplicateRecordFields #-}
 
-{- Etanol.Types. Includes basic Database functionality for Etanol field and method data.
-Also includes helper functions for Etanol.Analysis
--}
+{- Etanol.Types. Includes basic Database functionality for Etanol field 
+and method data. Also includes helper functions for Etanol.Analysis -}
+
 module Etanol.Types
     ( Descriptor(..)
     , getClassName
@@ -11,6 +11,8 @@ module Etanol.Types
     , MethodType(..)
     , FieldNullabilityType(..)
     , MethodNullabilityType(..)
+    , MethodNullabilityDB(..)
+    , FieldNullabilityDB(..)
     , FieldName
     , MethodName
     , isInit
@@ -135,9 +137,15 @@ data FieldNullabilityType
 
 instance Serialize FieldType -- heavylifting done by deriving Generic 
 
+instance Serialize FieldNullabilityType
+
 instance Y.FromJSON FieldType
 
 instance Y.ToJSON FieldType
+
+instance Y.FromJSON FieldNullabilityType
+
+instance Y.ToJSON FieldNullabilityType
 
 data MethodType
     = Pure
@@ -156,13 +164,23 @@ data MethodNullabilityType
 
 instance Serialize MethodType
 
+instance Serialize MethodNullabilityType
+
 instance Y.FromJSON MethodType
 
 instance Y.ToJSON MethodType
 
+instance Y.FromJSON MethodNullabilityType
+
+instance Y.ToJSON MethodNullabilityType
+
 type FieldDB = M.Map FieldID FieldType
 
 type MethodDB = M.Map MethodID MethodType
+
+type FieldNullabilityDB = M.Map FieldID FieldNullabilityType
+
+type MethodNullabilityDB = M.Map MethodID MethodNullabilityType
 
 isInit :: FilePath -> IO Bool
 isInit configLocation =

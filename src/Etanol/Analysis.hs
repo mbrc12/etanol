@@ -62,7 +62,9 @@ tHRESHOLD = 50
 unq = map (unsafeHead "unq") . group . sort
 
 initialStrongImpureList :: [NamePrefix]
-initialStrongImpureList = 
+initialStrongImpureList = []
+
+{--
     [ "java.io"
     , "java.net"
     , "javax.swing"
@@ -75,6 +77,7 @@ initialStrongImpureList =
     , "javax.rmi"
     , "javax.sound"
     ]
+--}
 
 isInitialStrongImpure :: AnyName -> Bool
 isInitialStrongImpure namae = any (isPrefix namae) initialStrongImpureList
@@ -189,7 +192,7 @@ toLocalHeapIndex = fromIntegral . succ . toIndex
 isFinalStaticField :: [ConstantInfo] -> FieldDB -> Int -> Maybe Bool
 isFinalStaticField cpool fieldDB idx =
     let fid = getFieldName cpool idx
-        ftype = fieldDB !? fid
+        ftype  = fieldDB !? fid
      in if isNothing ftype
             then Nothing
             else if ftype == Just Normal
@@ -414,13 +417,13 @@ analyseMethod cmap cpool loadedThings loadedThingsStatus fDB mDB thing =
         mData = methodData (loadedThings ! thing)
         (_, mCode, mCFG, af) = mData
         deps = dependencies cpool mCode
-        mDeps = filter isMethod deps -- :: [AnyID]
-        fDeps = filter isField deps -- :: [AnyID]
+        mDeps = filter isMethod deps
+        fDeps = filter isField deps
         mNAl =
             map EMethodID $
-            filter (\x -> M.notMember x mDB) $ map methodID mDeps -- ::[AnyID]
+            filter (\x -> M.notMember x mDB) $ map methodID mDeps
         fNAl =
-            map EFieldID $ filter (\x -> M.notMember x fDB) $ map fieldID fDeps -- ::[AnyID]
+            map EFieldID $ filter (\x -> M.notMember x fDB) $ map fieldID fDeps
         nAl = mNAl ++ fNAl
         nA = filter (\x -> M.notMember x loadedThings) nAl
                         -- not previously analyzed and also not loaded, but required for analysis
@@ -430,8 +433,11 @@ analyseMethod cmap cpool loadedThings loadedThingsStatus fDB mDB thing =
                   then "OK"
                   else error "Constant pool is WRONG!")) $
         if (AMNative `elem` af ||
-            AMSynchronized `elem` af || null mCode) -- || AMVarargs `elem` af || null mCode)
-                        -- These identifiers enable immediate disqualification or if Code is empty implying an abstract method
+            AMSynchronized `elem` af || null mCode) 
+                        -- || AMVarargs `elem` af || null mCode) -- disabled 
+                        -- VarArg check, see GSoC Phase 2 goals
+                        -- These identifiers enable immediate disqualification 
+                        -- or if Code is empty implying an abstract method
             then (loadedThingsStatus, fDB, M.insert mID UnanalyzableMethod mDB)
             else if isInitialStrongImpure mName
                      then ( loadedThingsStatus
@@ -478,9 +484,24 @@ analyseMethod cmap cpool loadedThings loadedThingsStatus fDB mDB thing =
                                                                      0
                                                                      (SReference
                                                                           0)
-                                                                     initialHeap
-                                                                                                -- otherwise just add the `this` instance.
+                                                                     initialHeap                    -- otherwise just add the `this` instance.
+
+                                                    replaceRefWithNull ::
+                                                        StackObject ->
+                                                        NStackObject
+                                                    replaceRefWithNull
+                                                        (SReference _) = 
+                                                            NSNullable
+                                                    replaceRefWithNull _ = 
+                                                            NSNonNullable
+
+                                                    lh_null = 
+                                                        M.map 
+                                                            replaceRefWithNull
+                                                            lh'
+                                                            
                                                     lhp = [lh']
+                                                    lhp_null = [lh_null]
                                                     initialState =
                                                         AnalysisBundle
                                                             cpool
@@ -495,6 +516,12 @@ analyseMethod cmap cpool loadedThings loadedThingsStatus fDB mDB thing =
                                                         resultant
                                                             getAnalysis
                                                             initialState
+                                                    {--
+                                                    (finalState', verdict') =
+                                                        resultant
+                                                            getAnalysisNull
+                                                            initialState_null
+                                                    --}
                                                     fDB' = fieldDB finalState
                                                     mDB' = methodDB finalState
                                                     mut =
@@ -535,7 +562,11 @@ data MutationType = BasicMutation | ObjectMutation      -- type of mutation, bas
 
 type Mutation = (Int, MutationType)
 
-verdictifyMethod :: [ConstantInfo] -> FieldDB -> MethodDB -> NamedMethodCode -> MethodType
+verdictifyMethod :: [ConstantInfo] 
+                    -> FieldDB 
+                    -> MethodDB 
+                    -> NamedMethodCode 
+                    -> MethodAnalysisResult
 verdictifyMethod cpool fDB mDB (mID, mCode, mCFG, mAF) = 
         let     deps = dependencies cpool mCode
                 stat = getStaticFields cpool mCode                              -- static field accesses by method
@@ -576,6 +607,11 @@ data StackObject
     | SObjArrayReference
     deriving (Eq, Show)
 
+data NStackObject
+    = NSNullable
+    | NSNonNullable
+    deriving (Eq, Show)
+
 type Stack = [StackObject] -- elements added at the beginning
 
 type Stacks = [Stack]
@@ -583,6 +619,14 @@ type Stacks = [Stack]
 type LocalHeap = M.Map Int StackObject
 
 type LocalHeaps = [LocalHeap]
+
+type NStack = [NStackObject]
+
+type NStacks = [NStack]
+
+type NLocalHeap = M.Map Int NStackObject
+
+type NLocalHeaps = [NLocalHeap]
 
 basicop :: (Int, Int) -> [Word8] -- basicop (input stack, output stack) -> which ops
 basicop (2, 1) =
