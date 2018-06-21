@@ -1288,7 +1288,9 @@ analyseAtom j (pos, ca@(op:rest)) loc stk
         let ~(_:(_:(e1:rest))) = stk
             ty = isParamRef e1
         if isJust ty
-            then setStackPos j rest
+            then do
+                    addMut j $ fromJust ty -- adding mutation to array
+                    setStackPos j rest
             else setStackPos j rest
     when (op == aastoreOp) $ do
         let ~(_:(_:(e1:rest))) = stk
@@ -1372,7 +1374,9 @@ analyseAtom j (pos, ca@(op:rest)) loc stk
     return Pure
 
 
-basicReturns, basicLoads, basicLoadsL :: [Word8]
+basicReturns, basicLoads, basicLoadsL, aLoads, mathOps21, mathOps11 :: [Word8]
+bitwiseInt, bitwiseLong, convert11, convert12, convert22, convert21 :: [Word8]
+ifConsume1, ifConsume2, compareConsume2 :: [Word8]
 
 basicReturns = [172..175] ++ [177] -- returns basic things
 basicLoads = [2..8] ++ [11..13] ++ [16..17] ++ [21, 23] ++ [26..29] ++ 
@@ -1381,12 +1385,34 @@ basicLoads = [2..8] ++ [11..13] ++ [16..17] ++ [21, 23] ++ [26..29] ++
                                             -- arrays are considered nonnull
                                             -- if some loading is being done
                                             -- from them
-             []
+             
 
 basicLoadsL = ([2..17] ++ [21..24] ++ [26..41] ++ [46..49] ++ [51..53])
                 \\ basicLoads
 
+aLoads = [25, 42, 43, 44, 45]
 
+mathOps21 = [96..115]
+mathOps11 = [116..119]
+
+bitwiseInt = [120, 122, 124, 126, 128, 130]
+bitwiseLong = [121, 123, 125, 127, 129, 131]
+
+-- convert cat i to cat j is convertij
+convert12 = [133, 135, 140, 141]
+convert11 = [134, 139,            145, 146, 147]
+convert21 = [136, 137, 142, 144]
+convert22 = [138, 143]
+
+ifConsume1 = [153 .. 158] ++ [170, 171, 198, 199] 
+                                    -- tableswitch and lookupswitch also work
+                                    -- like ifs, by consuming one value
+                                    -- same for ifnonnull and ifnull
+ifConsume2 = [159 .. 166]
+
+compareConsume2 = [148 .. 152]
+
+arrayStoresConsume3 = [79 .. 86]
 
 analyseAtom_null :: Int -> CodeAtom -> NLocalHeap -> NStack -> NAnalysisM MethodNullabilityType
 analyseAtom_null j (pos, []) loc stk = return NonNullableMethod
@@ -1395,7 +1421,7 @@ analyseAtom_null j (pos, ca@(op:rest)) loc stk = do
               op == monitorExitOp  ||
               op == invokeInterfaceOp ||
               op == invokeDynamicOp)
-    UnanalyzableNullMethod
+        UnanalyzableNullMethod
 
     whenExit (op == 0) NonNullableMethod -- nop => this thread is not nullable
 
@@ -1405,6 +1431,9 @@ analyseAtom_null j (pos, ca@(op:rest)) loc stk = do
     cpool <- getCpool_null
     n_fDB <- getFDB_null
     n_mDB <- getMDB_null
+    
+    when (op == aconstNullOp) $     -- this is the main step :)
+        setStackPos_null j (NSNullable : stk)
 
     whenExit (op == areturnOp) $
         let topelem = unsafeHead "Return from analyseAtom_null" stk
@@ -1419,6 +1448,20 @@ analyseAtom_null j (pos, ca@(op:rest)) loc stk = do
         -- op codes that return basic stuff is always nonnullable
         -- void is nonnullable in particular 
     
+    when (op == newOp || op ==newArrayOp 
+            || op == anewArrayOp || op == multianewArrayOp) $
+        setStackPos_null j (NSNonNullable : stk)    -- new stuff is nonnull
+
+    when (op == checkCastOp) $ return ()
+
+    when (op == 167 || op == 200) $ return () -- goto/goto_w op, no change
+
+    when (op == 190 || op == 193) $ -- array length and instanceof
+        setStackPos_null j (NSNonNullable : (tail stk)) 
+
+    -- ======================= Misc stuff finished ================ --    
+    -- For loads we don't look at local heaps assuming they are correct.
+
     when (op `elem` basicLoads) $
         setStackPos_null j (NSNonNullable : stk)  
                                              -- basic loads only add
@@ -1428,8 +1471,232 @@ analyseAtom_null j (pos, ca@(op:rest)) loc stk = do
         setStackPos_null j (NSNonNullableLong : stk)
                                             -- Category 2 stuff but same
                                             -- as above.
-     
- 
+    when (op `elem` aLoads) $ do -- object loads must look at local heap
+        let idx = getIdxOp ca
+            elm = getLocalHeapElem_null loc idx 
+        setStackPos_null j (elm : stk)
+    
+    when (op == aaloadOp) $ do  -- assuming the pointed to array is nonnull
+                                    -- but there is no guarantee that the object
+                                    -- loaded is not null
+        setStackPos_null j (NSNullable : stk)
+    
+    when (op == ldcOp || op == ldc_wOp) $ do
+        let ftype = getSTypeOfConstantWord8 rest cpool
+        if | ftype == OFBasic   -> 
+                    setStackPos_null j (NSNonNullable : stk)
+           | ftype == OFBasicLong ->
+                    setStackPos_null j (NSNonNullableLong : stk)
+           | ftype == OFReference ->
+                    setStackPos_null j (NSNonNullable : stk)
+                    -- this is nonnullable because constant references
+                    -- are always nonnull like strings etc.
+           | otherwise  ->
+                    exitWith UnanalyzableNullMethod
+    
+    when (op == 20) $   -- ldc2_w ; always loads category 2 types
+        setStackPos_null j (NSNonNullableLong : stk)
+
+    -- =============== Loads finished =================== --
+    -- For stores we have to look at local heaps
+    -- Take the thing that is on the stack and put it in the
+    -- respective location in the local heap. 
+    -- NOTE : There is no special checking involved.
+    when (op `elem` stores) $ do -- this case just handles the non-array stores
+        let idx          = getIdxOp ca 
+            (elm : rest) = debugLogger ("Stack size is " ++ show (length stk)) 
+                            stk
+         
+        setLocalHeapPos_null j $ localHeapOperate_null loc idx elm
+        setStackPos_null j rest -- remove element from stack    
+    
+    -- deals with iastore, aastore etc. Each of them affects
+    -- a arrayref and commits nothing to local heap, so just drop
+    -- 3 elements from the stack
+    when (op `elem` arrayStoresConsume3) $ 
+        setStackPos_null j (drop 3 stk)
+
+    -- =============== Stores finished =================== --
+    
+    when (op == popOp) $ setStackPos_null j $ tail stk
+    when (op == pop2Op) $ setStackPos_null j $ tail $ tail stk
+    when (op == dupOp) $ do
+        let ~(e1:rest) = stk
+        setStackPos_null j $ [e1, e1] ++ rest
+    when (op == dup_x1Op) $ do
+        let ~(e1:(e2:rest)) = stk
+        setStackPos_null j $ [e1, e2, e1] ++ rest
+    when (op == dup_x2Op) $ do
+        let ~(e1:(e2:rest)) = stk
+        if isCat2_null e2
+            then setStackPos_null j $ [e1, e2, e1] ++ rest
+            else let (e3:rest') = rest
+                  in setStackPos_null j $ [e1, e2, e3, e1] ++ rest'
+    when (op == dup2Op) $ do
+        let ~(e1:rest) = stk
+        if isCat2_null e1
+            then setStackPos_null j $ [e1, e1] ++ rest
+            else let ~(e2:rest) = stk
+                  in setStackPos_null j $ [e1, e2, e1, e2] ++ rest
+    when (op == dup2_x1Op) $ do
+        let ~(e1:(e2:rest)) = stk
+        if isCat2_null e1
+            then setStackPos_null j $ [e1, e2, e1] ++ rest
+            else let ~(e3:rest') = stk
+                  in setStackPos_null j $ [e1, e2, e3, e1, e2] ++ rest'
+    when (op == dup2_x2Op) $ do
+        let ~(e1:(e2:(e3:rest))) = stk
+        if isCat2_null e1
+            then setStackPos_null j $ [e1, e2, e3, e1] ++ rest
+            else let ~(e4:rest') = rest
+                  in setStackPos_null j $ [e1, e2, e3, e4, e1, e2] ++ rest'
+    when (op == swapOp) $ do
+        let ~(e1:(e2:rest)) = stk
+        setStackPos_null j $ [e2, e1] ++ rest
+
+    -- =============== dups, swap etc end ================= -- 
+    
+    when (op `elem` mathOps21) $ do -- remove two and insert one of the same
+                                    -- type. So just remove one.
+        setStackPos_null j $ tail stk
+
+    when (op `elem` mathOps11) $ return () -- remove 1 and insert 1 of same type
+                                           -- so equivalent to no-op for this
+                                           -- analysis
+
+    when (op `elem` (bitwiseInt ++ bitwiseLong)) $ do
+        let ~(a : (b : rest)) = stk
+        setStackPos_null j (b : rest)       -- for the case of lshl, ishl
+                                            -- top value is the shift which is
+                                            -- int. So in all cases, the second
+                                            -- element is the one whose type is
+                                            -- the type of the answer.
+
+    when (op == 132) $ return ()    -- iinc, no change.
+
+    when (op `elem` (convert11 ++ convert22)) $ return ()
+
+    when (op `elem` convert12) $
+        setStackPos_null j (NSNonNullableLong : (tail stk))
+
+    when (op `elem` convert21) $
+        setStackPos_null j (NSNonNullable : (tail stk))
+    
+    when (op `elem` ifConsume1) $ 
+        setStackPos_null j (tail stk)
+
+    when (op `elem` ifConsume2) $ 
+        setStackPos_null j (drop 2 stk)
+
+    when (op `elem` compareConsume2) $
+        setStackPos_null j (NSNonNullable : (drop 2 stk))
+
+    -- ================ math type ops done =============== --      
+    
+    when (op == getStatic) $ do
+        let fID     = getFieldIDWord8 rest cpool
+            ty      = n_fDB !? fID
+            ftype   = getSTypeOfFieldWord8 rest cpool
+        if isNothing ty
+           then exitWith UnanalyzableNullMethod
+                    -- whenExit can return from the deepest 
+                    -- when-s as well, for why this happens
+                    -- look at the implementation for MonadFX
+           else if fromJust ty == NullableField
+                then setStackPos_null j (NSNullable : stk)
+                else if ftype == OFBasicLong 
+                     then setStackPos_null j (NSNonNullableLong : stk)
+                     else setStackPos_null j (NSNonNullable : stk)
+                        -- this last else is for either basic non long types
+                        -- like int or nonnull references
+    
+    -- getField and getStatic are the same other than the fact
+    -- that getField will take an object ref, so the top elem
+    -- from the stack has to be popped
+
+    when (op == getFieldOp) $ do
+        let fID     = getFieldIDWord8 rest cpool
+            ty      = n_fDB !? fID
+            ftype   = getSTypeOfFieldWord8 rest cpool
+            stk'    = tail stk
+        if isNothing ty
+           then exitWith UnanalyzableNullMethod
+                    -- whenExit can return from the deepest 
+                    -- when-s as well, for why this happens
+                    -- look at the implementation for MonadFX
+           else if fromJust ty == NullableField
+                then setStackPos_null j (NSNullable : stk')
+                else if ftype == OFBasicLong
+                     then setStackPos_null j (NSNonNullableLong : stk')
+                     else setStackPos_null j (NSNonNullable : stk')
+    
+
+    -- putStatic and putField are also treated similarly now
+    -- but later putStatic must be modified to accommodate 
+    -- final static initialization in <clinit>
+    when (op == putStatic) $ setStackPos_null j (tail stk)
+    when (op == putFieldOp)  $ setStackPos_null j (drop 2 stk)
+    
+    when (op == invokeVirtualOp || op == invokeSpecialOp) $ do
+        let mID = getMethodName cpool (fromIntegral $ toIndex rest)
+            nar = length $ descriptorIndices $ snd mID
+            ~(obj:argsrem) = stk
+            args = take nar argsrem
+            oth = drop nar argsrem
+            mty = n_mDB !? mID
+        if isNothing mty
+            then exitWith UnanalyzableNullMethod
+            else let ret = getReturnType mID
+                 in  if | ret == RTBasic    -> 
+                                    setStackPos_null j (NSNonNullable : oth)
+                        | ret == RTBasicLong ->
+                                    setStackPos_null j (NSNonNullableLong : oth)
+                        | ret == RTVoid ->
+                                    setStackPos_null j oth
+                        | otherwise -> if fromJust mty == NullableMethod
+                                       then setStackPos_null j 
+                                                (NSNullable : oth)
+                                       else setStackPos_null j
+                                                (NSNonNullable : oth)
+                                -- inserting references which are either
+                                -- nullable or nonnullable
+
+    -- invokeStatic is almost the same as invokeSpecial and Virtual
+    -- except that there is no object being passed implicitly.
+    when (op == invokeStaticOp) $ do
+        let mID = getMethodName cpool (fromIntegral $ toIndex rest)
+            nar = length $ descriptorIndices $ snd mID
+            argsrem = stk
+            args = take nar argsrem
+            oth = drop nar argsrem
+            mty = n_mDB !? mID
+        if isNothing mty
+            then exitWith UnanalyzableNullMethod
+            else let ret = getReturnType mID
+                 in  if | ret == RTBasic    -> 
+                                    setStackPos_null j (NSNonNullable : oth)
+                        | ret == RTBasicLong ->
+                                    setStackPos_null j (NSNonNullableLong : oth)
+                        | ret == RTVoid ->
+                                    setStackPos_null j oth
+                        | otherwise -> if fromJust mty == NullableMethod
+                                       then setStackPos_null j 
+                                                (NSNullable : oth)
+                                       else setStackPos_null j
+                                                (NSNonNullable : oth)
+                                -- inserting references which are either
+                                -- nullable or nonnullable
+    
+    -- final returns
+    return NonNullableMethod
+
+
+
+getFieldIDWord8 :: [Word8] -> [ConstantInfo] -> FieldID
+getFieldIDWord8 rest cpool 
+    =   let idx = toIndex rest
+        in getFieldName cpool (fromIntegral idx)
+
 data ObjectField
     = OFBasic
     | OFBasicLong

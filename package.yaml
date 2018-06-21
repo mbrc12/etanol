@@ -1,5 +1,5 @@
 name:                etanol
-version:             0.1.0.0
+version:             1.0.0.0
 github:              "mbrc12/etanol"
 license:             BSD3
 author:              "Mriganka Basu Roy Chowdhury"
@@ -32,6 +32,7 @@ dependencies:
 - bytecode-parser
 - bytestring >= 0.10.8.2
 - binary >= 0.8.5.1
+- zip-archive >= 0.3.2.4
 
 library:
   source-dirs: src
