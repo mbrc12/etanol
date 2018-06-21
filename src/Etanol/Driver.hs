@@ -31,14 +31,21 @@ import System.Process (callCommand)
 
 import ByteCodeParser.BasicTypes
 import Etanol.Analysis
-import Etanol.Crawler
+--import Etanol.Crawler
+import Etanol.JarUtils
 import Etanol.Decompile
 import Etanol.Types
 
-fieldsYaml, methodsYaml :: String
+import qualified EtanolTools.Unsafe as U
+
+fieldsYaml, methodsYaml, fieldsYaml_null, methodsYaml_null :: String
 fieldsYaml = "fields.yaml"
 
 methodsYaml = "methods.yaml"
+
+fieldsYaml_null = "fields_nullability.yaml"
+
+methodsYaml_null = "methods_nullability.yaml"
 
 configName :: FilePath
 configName = ".etanolrc"
@@ -68,16 +75,16 @@ getConfigPath = do
     when (isNothing hDir) $
         error "No HOME set! Please set your HOME environment variable."
     let home = fromJust hDir
-    putStrLn $ "Home directory: " ++ home
+    U.infoLoggerM $ "Home directory: " ++ home
     let configpath = home </> configName
     exs <- doesFileExist configpath
     when (not exs) $ do
         defconf <- defaultConfigFile
-        putStrLn $
+        U.infoLoggerM $
             "No config file " ++
             show configpath ++ " found. Creating default config file."
         writeFile configpath defconf
-        putStrLn "Completed."
+        U.infoLoggerM "Completed."
     return configpath
 
 getConfigDirectory :: IO FilePath
@@ -91,9 +98,9 @@ getConfigDirectory = do
     let confdir = config_directory $ fromJust config
     exs <- doesDirectoryExist confdir
     when (not exs) $ do
-        putStrLn $ "Creating non-existent directory " ++ confdir
+        U.infoLoggerM $ "Creating non-existent directory " ++ confdir
         createDirectory confdir
-        putStrLn "Completed."
+        U.infoLoggerM "Completed."
     return $ confdir
 
 endsWith :: String -> String -> Bool
@@ -111,46 +118,43 @@ ifJarThenExtractAndGimmeFileName fp =
             let unzipPath = confDir </> "unzipped"
             exs <- doesDirectoryExist unzipPath
             when (exs) $ do
-                putStrLn "Cleaning the previously extracted files.."
+                U.infoLoggerM "Cleaning the previously extracted files.."
                 removeDirectoryRecursive unzipPath
-                putStrLn "Completed."
+                U.infoLoggerM "Completed."
             let unzipShell = unzipCommand ++ " " ++ fp ++ " -d " ++ unzipPath
-            putStrLn "\nExtracting jar files..\n"
+            U.infoLoggerM "\nExtracting jar files..\n"
             callCommand unzipShell
-            putStrLn "\nDone.\n"
+            U.infoLoggerM "\nDone.\n"
             return unzipPath
         else return fp
 
 resetConfigDirectory :: IO ()
 resetConfigDirectory = do
     dir <- getConfigDirectory
-    putStrLn $ "Resetting config directory " ++ dir ++ ".."
+    U.infoLoggerM $ "Resetting config directory " ++ dir ++ ".."
     removeDirectoryRecursive dir
-    putStrLn "Completed."
+    U.infoLoggerM "Completed."
 
-getInitialDBs :: FilePath -> IO (FieldDB, MethodDB)
+getInitialDBs :: FilePath -> 
+                IO (FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB)
 getInitialDBs config = do
     exs <- isInit config
     when (not exs) $ initDB config
     fDB <- getFieldDB config
     mDB <- getMethodDB config
-    return (fDB, mDB)
+    n_fDB <- getFieldDB_null config
+    n_mDB <- getMethodDB_null config
+    return (fDB, mDB, n_fDB, n_mDB)
 
 driver :: FilePath -> FilePath -> IO ()
 driver config path = do
-    exs <- doesDirectoryExist path
-    when (not exs) $ error "The said directory does not exist! Aborting."
-    putStrLn "Reading classes.."
-    rcf <- readRawClassFilesInDirectory path
-    (ifDB, imDB) <- getInitialDBs config
-    putStrLn "Databases loaded."
-    let rcs =
-            map
-                (\rc ->
-                     if isLeft rc
-                         then error ("ERROR : " ++ show rc)
-                         else fromRight undefined rc)
-                rcf
+    --exs <- doesDirectoryExist path
+    --when (not exs) $ error "The said directory does not exist! Aborting."
+    U.infoLoggerM "Reading classes.."
+    rcs <- readRawClassFilesFromPath path
+    (ifDB, imDB, n_ifDB, n_imDB) <- getInitialDBs config
+    U.infoLoggerM "Databases loaded."
+    let 
         mthds = concatMap getMethods rcs
         flds = concatMap getFields rcs
         cnames = map (javaNamify . thisClass) rcs
@@ -166,41 +170,58 @@ driver config path = do
             map (\i -> (EMethodID i, NotAnalyzed)) mids
         ltm = M.fromList loadedThings
         lst = M.fromList loadedStatus
-        (_, ffDB, fmDB) = analyseAll cmap ltm lst ifDB imDB
+        (_, ffDB, fmDB, n_ffDB, n_fmDB) = analyseAll 
+                                                cmap 
+                                                ltm 
+                                                lst 
+                                                ifDB 
+                                                imDB
+                                                n_ifDB
+                                                n_imDB
     saveFieldDB config ffDB
     saveMethodDB config fmDB
-    putStrLn $
-        "Completed. " ++ (show $ length rcf) ++ " classes loaded and analysed."
+    saveFieldDB_null config n_ffDB
+    saveMethodDB_null config n_fmDB
+    U.infoLoggerM $
+        "Completed. " ++ (show $ length rcs) ++ " classes loaded and analysed."
 
 dumpDatabases :: FilePath -> IO ()
 dumpDatabases path = do
     exsdir <- doesDirectoryExist path
     when (not exsdir) $ do
-        putStr $ "Directory " ++ path ++ " does not exist. Create? (y/n) [n] "
+        U.infoLoggerM $ "Directory " ++ path ++ " does not exist. Create? (y/n) [n] "
         hFlush stdout
         ch <- getLine
         when (null ch) $ die "Not creating a new directory."
         if (head ch `elem` ['y', 'Y'])
             then do
-                putStrLn "Creating directory.."
+                U.infoLoggerM "Creating directory.."
                 createDirectory path
-                putStrLn "Done."
+                U.infoLoggerM "Done."
             else die "Not creating a new directory."
     confDir <- getConfigDirectory
     initialized <- isInit confDir
     when (not initialized) $
         die
             "No fields and methods databases, please perform atleast one analysis first."
-    putStrLn $ "Dumping analysis data to " ++ path
+    U.infoLoggerM $ "Dumping analysis data to " ++ path
     fDB <- getFieldDB confDir
     mDB <- getMethodDB confDir
+    n_fDB <- getFieldDB_null confDir
+    n_mDB <- getMethodDB_null confDir
     let fieldsYamlPath = path </> fieldsYaml
         methodsYamlPath = path </> methodsYaml
+        n_fieldsYamlPath = path </> fieldsYaml_null
+        n_methodsYamlPath = path </> methodsYaml_null
         encFields = Y.encode fDB
         encMethods = Y.encode mDB
+        n_encFields = Y.encode n_fDB
+        n_encMethods = Y.encode n_mDB
     B.writeFile fieldsYamlPath encFields
     B.writeFile methodsYamlPath encMethods
-    putStrLn "Completed."
+    B.writeFile n_fieldsYamlPath n_encFields
+    B.writeFile n_methodsYamlPath n_encMethods
+    U.infoLoggerM "Completed."
 
 startpoint :: FilePath -> IO ()
 startpoint path = do

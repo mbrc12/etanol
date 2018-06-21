@@ -47,8 +47,8 @@ execArgs ((arg, argparam):rest) = do
            do when (null argparam) $
                   die "Please point to a resource for analysis."
               absPath <- canonicalizePath argparam
-              path <- ifJarThenExtractAndGimmeFileName absPath
-              startpoint path
+              --path <- ifJarThenExtractAndGimmeFileName absPath
+              startpoint absPath
        | arg == helpArg -> putStrLn helpMessage
        | arg == dumpArg ->
            do when (null argparam) $

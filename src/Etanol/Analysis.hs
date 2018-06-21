@@ -1504,8 +1504,8 @@ analyseAtom_null j (pos, ca@(op:rest)) loc stk = do
     -- NOTE : There is no special checking involved.
     when (op `elem` stores) $ do -- this case just handles the non-array stores
         let idx          = getIdxOp ca 
-            (elm : rest) = debugLogger ("Stack size is " ++ show (length stk)) 
-                            stk
+            (elm : rest) = stk --debugLogger ("Stack size is " ++ show (length stk)) 
+                            --stk
          
         setLocalHeapPos_null j $ localHeapOperate_null loc idx elm
         setStackPos_null j rest -- remove element from stack    

@@ -1,8 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Etanol.Crawler
-    ( getClassFileNames
-    , readRawClassFilesInDirectory
+    (readRawClassFilesInDirectory
     ) where
 
 -- TODO: Once this becomes stable document what all is being imported into scope
@@ -35,6 +34,6 @@ getClassFileNames directory = do
     recursive_files <- pure concat <*> mapM getClassFileNames directories
     return $ files ++ recursive_files
 
-readRawClassFilesInDirectory :: FilePath -> IO [Either Error RawClassFile]
+readRawClassFilesInDirectory :: FilePath -> IO [RawClassFile]
 readRawClassFilesInDirectory directory =
     getClassFileNames directory >>= mapM readRawClassFile
