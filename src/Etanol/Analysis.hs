@@ -39,7 +39,10 @@ import Data.Graph.Inductive.PatriciaTree
 import Data.List
 import Data.Map.Strict ((!), (!?))
 import qualified Data.Map.Strict as M
+import qualified Data.Text as T
 import Data.Maybe
+import qualified Data.Vector as V
+--import Data.Vector ((!))
 
 import ByteCodeParser.BasicTypes
 import ByteCodeParser.Instructions
@@ -51,9 +54,9 @@ import Etanol.Types
 
 import EtanolTools.Unsafe
 
-type NamePrefix = String -- prefixes of strings, anynames
+type NamePrefix = T.Text -- prefixes of strings, anynames
 
-type AnyName = String
+type AnyName = T.Text
 
 tHRESHOLD :: Int
 tHRESHOLD = 50
@@ -80,16 +83,7 @@ initialStrongImpureList = []
 --}
 
 isInitialStrongImpure :: AnyName -> Bool
-isInitialStrongImpure namae = any (isPrefix namae) initialStrongImpureList
-
--- if s is a prefix of t
-isPrefix :: String -> String -> Bool
-isPrefix t s =
-    if length t < length s
-        then False
-        else if (s == take (length s) t)
-                 then True
-                 else False
+isInitialStrongImpure !namae = any (\s -> T.isPrefixOf s namae) initialStrongImpureList
 
 getFieldOp, putFieldOp, invokeStaticOp, invokeSpecialOp, invokeVirtualOp, invokeInterfaceOp, invokeDynamicOp ::
        Word8
@@ -189,7 +183,7 @@ toIndex =
 toLocalHeapIndex :: [Word8] -> Int
 toLocalHeapIndex = fromIntegral . succ . toIndex
 
-isFinalStaticField :: [ConstantInfo] -> FieldDB -> Int -> Maybe Bool
+isFinalStaticField :: V.Vector ConstantInfo -> FieldDB -> Int -> Maybe Bool
 isFinalStaticField cpool fieldDB idx =
     let fid = getFieldName cpool idx
         ftype  = fieldDB !? fid
@@ -208,8 +202,8 @@ data AnyID
     deriving (Eq, Ord)
 
 instance Show AnyID where
-    show (EFieldID f) = "field " ++ fst f ++ ":" ++ snd f
-    show (EMethodID m) = "method " ++ fst m ++ ":" ++ snd m
+    show (EFieldID f) = "field " ++ T.unpack (fst f) ++ ":" ++ T.unpack (snd f)
+    show (EMethodID m) = "method " ++ T.unpack (fst m) ++ ":" ++ T.unpack (snd m)
 
 data AnyData
     = EFieldData { fieldData :: NamedField }
@@ -225,13 +219,13 @@ isMethod (EMethodID _) = True
 isMethod _ = False
 
 -- Figure out the direct dependencies of a piece of code given the constant pool
-dependencies :: [ConstantInfo] -> [CodeAtom] -> [AnyID]
+dependencies :: V.Vector ConstantInfo -> [CodeAtom] -> [AnyID]
 dependencies cpool codes = uniques $ depsMethod cpool codes
 
 -- Note that this does not need to account for new or anewarray or multianewarray as
 -- their constructors are called shortly after these declarations, including them in
 -- the dependencies anyway
-depsMethod :: [ConstantInfo] -> [CodeAtom] -> [AnyID]
+depsMethod :: V.Vector ConstantInfo -> [CodeAtom] -> [AnyID]
 depsMethod cpool [] = []
 depsMethod cpool ((idx, op:rest):restcode)
     | op `elem` [getFieldOp, putFieldOp, getStatic, putStatic] =
@@ -256,7 +250,7 @@ type LoadedThingsStatus = M.Map AnyID Status
 nonEmpty :: [a] -> Bool
 nonEmpty = not . null
 
-type CPoolMap = M.Map ClassName [ConstantInfo]
+type CPoolMap = M.Map ClassName (V.Vector ConstantInfo)
 
 -- if empty list then print error else return head
 unsafeHead :: String -> [a] -> a
@@ -265,10 +259,10 @@ unsafeHead err xs =
         then (error err)
         else (head xs)
 
-getConstantPoolForThing :: CPoolMap -> AnyID -> [ConstantInfo]
+getConstantPoolForThing :: CPoolMap -> AnyID -> (V.Vector ConstantInfo)
 getConstantPoolForThing cmap thing =
     if isNothing result
-        then error $ "Constant Pool does not exist for " ++ cn ++ "."
+        then error $ "Constant Pool does not exist for " ++ T.unpack cn ++ "."
         else fromJust result
   where
     toName :: AnyID -> AnyName
@@ -311,13 +305,13 @@ analyseAll cmap loadedThings loadedThingsStatus fDB mDB n_fDB n_mDB =
                  analyseAll cmap loadedThings loadedThingsStatus' fDB' mDB' n_fDB' n_mDB'
 
 toRepr :: AnyID -> String
-toRepr (EFieldID f) = " Field " ++ (fst f) ++ ":" ++ (snd f)
-toRepr (EMethodID m) = " Method " ++ (fst m) ++ ":" ++ (snd m)
+toRepr (EFieldID f) = " Field " ++ T.unpack (fst f) ++ ":" ++ T.unpack (snd f)
+toRepr (EMethodID m) = " Method " ++ T.unpack (fst m) ++ ":" ++ T.unpack (snd m)
 
 -- assumes thing to be in loadedThings
 analysisDriver ::
        CPoolMap
-    -> [ConstantInfo]
+    -> V.Vector ConstantInfo
     -> LoadedThings
     -> LoadedThingsStatus
     -> FieldDB
@@ -370,10 +364,10 @@ analysisDriver cmap cpool loadedThings loadedThingsStatus fDB mDB n_fDB n_mDB th
 
 isBasic :: FieldDescriptor -> Bool
 isBasic "" = error "Empty field descriptor!"
-isBasic s = (head s) `elem` ['B', 'C', 'D', 'F', 'I', 'J', 'S', 'Z']
+isBasic s = (T.head s) `elem` ['B', 'C', 'D', 'F', 'I', 'J', 'S', 'Z']
 
 -- checks if it is final static or basic type atm, assumes AnyID is a isField
-analyseField :: [ConstantInfo] -> LoadedThings -> FieldDB -> AnyID -> FieldDB
+analyseField :: V.Vector ConstantInfo -> LoadedThings -> FieldDB -> AnyID -> FieldDB
 analyseField cpool loadedThings fDB thing =
     let fID = fieldID thing
         ((_, fDesc), fAccessFlags) = fieldData (loadedThings ! thing)
@@ -385,8 +379,8 @@ analyseField cpool loadedThings fDB thing =
                          else Normal
      in M.insert fID verdict fDB
 
-analyseField_null :: [ConstantInfo] -> LoadedThings -> FieldNullabilityDB -> AnyID -> FieldNullabilityDB
-analyseField_null cpool loadedThings n_fDB thing =
+analyseField_null :: V.Vector ConstantInfo -> LoadedThings -> FieldNullabilityDB -> AnyID -> FieldNullabilityDB
+analyseField_null !cpool !loadedThings !n_fDB !thing =
     let fID = fieldID thing
         ((_, fDesc), fAccessFlags) = fieldData (loadedThings ! thing)
         verdict =
@@ -414,7 +408,7 @@ feedAll ::
     -> [AnyID]
     -> (LoadedThingsStatus, FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB)
 feedAll _ _ loadedThingsStatus fDB mDB n_fDB n_mDB [] = (loadedThingsStatus, fDB, mDB, n_fDB, n_mDB)
-feedAll cmap loadedThings loadedThingsStatus fDB mDB n_fDB n_mDB (aID:rest) =
+feedAll !cmap !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_mDB (aID:rest) =
     let (lth', fdb', mdb', n_fdb', n_mdb') =
             if M.member aID loadedThingsStatus
                 then analysisDriver
@@ -435,7 +429,7 @@ feedAll cmap loadedThings loadedThingsStatus fDB mDB n_fDB n_mDB (aID:rest) =
 -- currently no recursive method is analyzed to be pure
 analyseMethod ::
        CPoolMap
-    -> [ConstantInfo]
+    -> V.Vector ConstantInfo
     -> LoadedThings
     -> LoadedThingsStatus
     -> FieldDB
@@ -444,7 +438,7 @@ analyseMethod ::
     -> MethodNullabilityDB
     -> AnyID
     -> (LoadedThingsStatus, FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB)
-analyseMethod cmap cpool loadedThings loadedThingsStatus fDB mDB n_fDB n_mDB thing =
+analyseMethod !cmap !cpool !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_mDB !thing =
     let mID = methodID thing
         mName = fst mID
         mDes = snd mID
@@ -536,7 +530,12 @@ analyseMethod cmap cpool loadedThings loadedThingsStatus fDB mDB n_fDB n_mDB thi
                                                     replaceRefWithNull
                                                         SBasicLong = 
                                                             NSNonNullableLong
-
+                                                    replaceRefWithNull _ = 
+                                                            NSNonNullable
+                                                    -- others can be fresh objects
+                                                    -- or basic which are
+                                                    -- nonnullable
+                                                    
                                                     lh_null = 
                                                         M.map 
                                                             replaceRefWithNull
@@ -652,7 +651,7 @@ verdictifyMethod cpool fDB mDB (mID, mCode, mCFG, mAF) =
                                               else Impure
 
 -- | get static fields used in code
-getStaticFields :: [ConstantInfo] -> [CodeAtom] -> [FieldID]
+getStaticFields :: V.Vector ConstantInfo -> [CodeAtom] -> [FieldID]
 getStaticFields cpool ((_, (op : rest)) : restcode) 
         | op `elem` [getStatic, putStatic]      =     let idx = toIndex rest
                                                       in  (getFieldName cpool $ fromIntegral idx) : getStaticFields cpool restcode
@@ -660,7 +659,7 @@ getStaticFields cpool ((_, (op : rest)) : restcode)
 
 
 -- | Get all mutations done to passed parameters in code
-getMutations :: [ConstantInfo] -> MethodDB -> CFG -> [Mutation]
+getMutations :: V,Vector ConstantInfo -> MethodDB -> CFG -> [Mutation]
 getMutations cpool mDB cfg = undefined --stepThrough cpool mDB cfg theStart
 --}
 data StackObject
@@ -769,7 +768,7 @@ nonBasicopLAll = concatMap nonBasicopL definedAtNonBasicL
 type MutLocs = [Int]
 
 data AnalysisBundle = AnalysisBundle
-    { cpool :: [ConstantInfo]
+    { cpool :: V.Vector ConstantInfo
     , methodDB :: MethodDB
     , fieldDB :: FieldDB
     , cfg :: CFG
@@ -781,7 +780,7 @@ data AnalysisBundle = AnalysisBundle
 
 data NullAnalysisBundle = NullAnalysisBundle 
     { n_methodName :: MethodID 
-    , n_cpool :: [ConstantInfo]
+    , n_cpool :: V.Vector ConstantInfo
     , n_methodDB :: MethodNullabilityDB
     , n_fieldDB :: FieldNullabilityDB
     , n_cfg :: CFG
@@ -793,10 +792,10 @@ data NullAnalysisBundle = NullAnalysisBundle
 type AnalysisM = FX AnalysisBundle MethodType -- the analysis monad
 type NAnalysisM = FX NullAnalysisBundle MethodNullabilityType
 
-getCpool :: AnalysisM [ConstantInfo]
+getCpool :: AnalysisM (V.Vector ConstantInfo)
 getCpool = pure cpool <*> getS
 
-getCpool_null :: NAnalysisM [ConstantInfo]
+getCpool_null :: NAnalysisM (V.Vector ConstantInfo)
 getCpool_null = pure n_cpool <*> getS
 
 getMDB :: AnalysisM MethodDB
@@ -1692,7 +1691,7 @@ analyseAtom_null j (pos, ca@(op:rest)) loc stk = do
 
 
 
-getFieldIDWord8 :: [Word8] -> [ConstantInfo] -> FieldID
+getFieldIDWord8 :: [Word8] -> V.Vector ConstantInfo -> FieldID
 getFieldIDWord8 rest cpool 
     =   let idx = toIndex rest
         in getFieldName cpool (fromIntegral idx)
@@ -1722,8 +1721,8 @@ voidElem = "V"
 
 getReturnType :: MethodID -> ReturnType
 getReturnType (_, des) =
-    let ret = reverse $ takeWhile (/= ')') $ reverse des
-        fc = unsafeHead "getReturnType" ret
+    let ret = T.reverse $ T.takeWhile (/= ')') $ T.reverse des
+        fc = T.head ret
      in if | fc `elem` basicList -> RTBasic
            | fc `elem` longList -> RTBasicLong
            | fc `elem` refList -> RTReference
@@ -1748,7 +1747,7 @@ isParamRef :: StackObject -> Maybe Int
 isParamRef (SReference x) = Just x
 isParamRef _ = Nothing
 
-getSTypeOfConstantWord8 :: [Word8] -> [ConstantInfo] -> ObjectField
+getSTypeOfConstantWord8 :: [Word8] -> V.Vector ConstantInfo -> ObjectField
 getSTypeOfConstantWord8 rest cpool =
     let idx = fromIntegral $ toIndex rest
         vp = constType $ cpool !@ idx
@@ -1762,7 +1761,7 @@ getSTypeOfConstantWord8 rest cpool =
             _ -> OFUnknown
 
 isFinalStaticFieldWord8MaybeStripped ::
-       [Word8] -> [ConstantInfo] -> FieldDB -> Bool
+       [Word8] -> V.Vector ConstantInfo -> FieldDB -> Bool
 isFinalStaticFieldWord8MaybeStripped a b c =
     (\m ->
          if isJust m
@@ -1770,7 +1769,7 @@ isFinalStaticFieldWord8MaybeStripped a b c =
              else False) $
     isFinalStaticFieldWord8 a b c
 
-isFinalStaticFieldWord8 :: [Word8] -> [ConstantInfo] -> FieldDB -> Maybe Bool
+isFinalStaticFieldWord8 :: [Word8] -> V.Vector ConstantInfo -> FieldDB -> Maybe Bool
 isFinalStaticFieldWord8 rest cpool fdb =
     let idx = toIndex rest
         fID = getFieldName cpool (fromIntegral idx)
@@ -1779,25 +1778,25 @@ isFinalStaticFieldWord8 rest cpool fdb =
             then Just $ fromJust fty == FinalStatic
             else Nothing
 
-getSTypeOfFieldWord8 :: [Word8] -> [ConstantInfo] -> ObjectField
+getSTypeOfFieldWord8 :: [Word8] -> V.Vector ConstantInfo -> ObjectField
 getSTypeOfFieldWord8 rest cpool =
     getSTypeOfField (fromIntegral $ toIndex rest) cpool
 
-getSTypeOfField :: Int -> [ConstantInfo] -> ObjectField
+getSTypeOfField :: Int -> V.Vector ConstantInfo -> ObjectField
 getSTypeOfField idx cpool =
-    let des = unsafeHead "getSType" $ snd $ getFieldName cpool idx
+    let des = T.head $ snd $ getFieldName cpool idx
      in if | des `elem` basicList -> OFBasic
            | des `elem` longList -> OFBasicLong
            | des `elem` refList -> OFReference
            | otherwise -> error $ "Invalid Field Type of character " ++ show des
 
-descriptorIndices2 :: String -> [(Int, StackObject)]
+descriptorIndices2 :: T.Text -> [(Int, StackObject)]
 descriptorIndices2 descriptor = recursiveCalc desc2 1
   where
-    desc2 = takeWhile (')' /=) $ drop 1 descriptor -- Convert (xxx)yyy -> xxx
-    recursiveCalc :: String -> Int -> [(Int, StackObject)]
+    desc2 = T.takeWhile (')' /=) $ T.drop 1 descriptor -- Convert (xxx)yyy -> xxx
+    recursiveCalc :: T.Text -> Int -> [(Int, StackObject)]
     recursiveCalc ("") x = []
-    recursiveCalc (c:left) x =
+    recursiveCalc des x =
         if c `elem` (basicList ++ longList)
             then if c `elem` longList
                      then (x, SBasicLong) : recursiveCalc left (x + 2)
@@ -1805,24 +1804,25 @@ descriptorIndices2 descriptor = recursiveCalc desc2 1
             else if c == 'L'
                      then (x, SReference x) :
                           recursiveCalc
-                              (drop 1 $ dropWhile (';' /=) left)
+                              (T.drop 1 $ T.dropWhile (';' /=) left)
                               (x + 1)
                      else if c == '['
-                              then let arrTypeAnd = dropWhile ('[' ==) left
+                              then let arrTypeAnd = T.dropWhile ('[' ==) left
                                        arrType =
-                                           unsafeHead
-                                               "descriptorIndices2"
-                                               arrTypeAnd
+                                           T.head arrTypeAnd
                                     in if arrType == 'L'
                                            then (x, SReference x) :
                                                 recursiveCalc
-                                                    (drop 1 $
-                                                     dropWhile
+                                                    (T.drop 1 $
+                                                     T.dropWhile
                                                          (';' /=)
                                                          arrTypeAnd)
                                                     (x + 1)
                                            else (x, SReference x) :
                                                 recursiveCalc
-                                                    (drop 1 arrTypeAnd)
+                                                    (T.drop 1 arrTypeAnd)
                                                     (x + 1)
                               else []
+        where
+            c       = T.head des
+            left    = T.tail des

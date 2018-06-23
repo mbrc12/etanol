@@ -9,6 +9,7 @@ import ByteCodeParser.BasicTypes
 import ByteCodeParser.Reader
 import qualified EtanolTools.Unsafe as U
 
+import System.Mem
 import System.Directory (doesDirectoryExist, doesFileExist)
 import System.Exit (die)
 import qualified Codec.Archive.Zip as Z
@@ -50,6 +51,8 @@ extractJar path = do
     U.infoLoggerM $ "Reading " ++ path
 
     fileData <- BL.readFile path
+    
+    performMajorGC
 
     return $ Z.toArchive fileData
     
@@ -72,7 +75,9 @@ createJar path = do
                     (Z.OptRecursive : extraOpts)
                     Z.emptyArchive
                     [path]
- 
+    
+    performMajorGC
+
     return archive    
 
 -- NOTE: Note that extractJar and createJar are not opposites

@@ -31,7 +31,7 @@ import System.Process (callCommand)
 
 import ByteCodeParser.BasicTypes
 import Etanol.Analysis
---import Etanol.Crawler
+import Etanol.Crawler
 import Etanol.JarUtils
 import Etanol.Decompile
 import Etanol.Types
@@ -150,10 +150,25 @@ driver :: FilePath -> FilePath -> IO ()
 driver config path = do
     --exs <- doesDirectoryExist path
     --when (not exs) $ error "The said directory does not exist! Aborting."
+    
+    let backend = U.getBackend
+        processingFunction = if backend == U.DirectoryBackend
+                                then readRawClassFilesInDirectory
+                                else readRawClassFilesFromPath
+
+    path' <- if backend == U.DirectoryBackend   -- if directory then you need to 
+                                                -- extract jar files
+             then ifJarThenExtractAndGimmeFileName path
+             else return path
+     
     U.infoLoggerM "Reading classes.."
-    rcs <- readRawClassFilesFromPath path
+    
+    rcs <- processingFunction path
+
     (ifDB, imDB, n_ifDB, n_imDB) <- getInitialDBs config
-    U.infoLoggerM "Databases loaded."
+    U.infoLoggerM "Databases loaded." 
+    
+
     let 
         mthds = concatMap getMethods rcs
         flds = concatMap getFields rcs

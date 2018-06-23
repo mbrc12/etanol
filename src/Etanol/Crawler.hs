@@ -14,6 +14,8 @@ import Data.List (isSuffixOf)
 import System.Directory (doesDirectoryExist, doesFileExist, listDirectory)
 import System.FilePath.Posix ((</>))
 
+import qualified Data.Text as T
+
 isClass :: FilePath -> Bool
 isClass = isSuffixOf ".class"
 
@@ -35,5 +37,5 @@ getClassFileNames directory = do
     return $ files ++ recursive_files
 
 readRawClassFilesInDirectory :: FilePath -> IO [RawClassFile]
-readRawClassFilesInDirectory directory =
-    getClassFileNames directory >>= mapM readRawClassFile
+readRawClassFilesInDirectory directory = do
+    (fmap . fmap) T.pack (getClassFileNames directory) >>= mapM readRawClassFile

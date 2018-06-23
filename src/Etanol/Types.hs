@@ -50,6 +50,7 @@ module Etanol.Types
     ) where
 
 import qualified Data.Map.Strict as M
+import qualified Data.Text as T
 import Data.Map.Strict ((!), (!?))
 
 import qualified Data.ByteString as B
@@ -65,6 +66,8 @@ import ByteCodeParser.Reader
 import Etanol.ControlFlowGraph
 
 import Data.Serialize
+import Data.Serialize.Text
+
 import qualified Data.Yaml as Y
 import GHC.Generics
 
@@ -76,8 +79,8 @@ unsafeHead err xs =
         then (error err)
         else (head xs)
 
-getClassName :: String -> String
-getClassName = reverse . tail . dropWhile (/= '.') . reverse
+getClassName :: T.Text -> T.Text
+getClassName = T.reverse . T.tail . T.dropWhile (/= '.') . T.reverse
 
 fieldsFile, methodsFile, fieldsNullFile, methodsNullFile :: FilePath
 fieldsFile = "fields.db"
@@ -115,15 +118,15 @@ thirdof4 (a, b, c, d) = c
 
 fourthof4 (a, b, c, d) = d
 
-type FieldDescriptor = String
+type FieldDescriptor = T.Text
 
-type MethodDescriptor = String
+type MethodDescriptor = T.Text
 
-type FieldName = String
+type FieldName = T.Text
 
-type MethodName = String
+type MethodName = T.Text
 
-type ClassName = String
+type ClassName = T.Text
 
 type FieldID = (FieldName, FieldDescriptor)
 
@@ -281,13 +284,13 @@ saveMethodDB_null configLocation map =
 
 
 
-adjoinClassName :: ClassName -> String -> MethodName
-adjoinClassName x y = x ++ "." ++ y
+adjoinClassName :: ClassName -> T.Text -> MethodName
+adjoinClassName x y = T.concat [x, ".", y]
 
 -- this is used in getMethods, because class names are saved like com/a/b/c/Class. We want it to be like com.a.b.c.Class
-fixClassName :: String -> ClassName
+fixClassName :: T.Text -> ClassName
 fixClassName =
-    map (\x ->
+    T.map (\x ->
              if x == '/'
                  then '.'
                  else x)
@@ -306,14 +309,14 @@ findCodeAttribute ainfo =
 
 getMethod :: ClassName -> MethodInfo -> NamedMethodCode
 getMethod className methodInfo =
-    let methodName :: String =
+    let methodName :: T.Text =
             adjoinClassName className $ name (methodInfo :: MethodInfo)
-        methodDescriptor :: String = descriptorString (methodInfo :: MethodInfo)
+        methodDescriptor :: T.Text = descriptorString (methodInfo :: MethodInfo)
         methodCode :: [CodeAtom] =
             findCodeAttribute $ attributes (methodInfo :: MethodInfo)
         methodCFG = generateControlFlowGraph methodCode
         methodAccessFlags = accessFlags (methodInfo :: MethodInfo)
-     in debugLogger ("Reading method: " ++ methodName) $
+     in debugLogger ("Reading method: " ++ T.unpack methodName) $
         ( (methodName, methodDescriptor)
         , methodCode
         , methodCFG
@@ -335,11 +338,11 @@ type NamedField = (FieldID, [FieldAccessFlag])
 
 getField :: ClassName -> FieldInfo -> NamedField
 getField className fieldInfo =
-    let fieldName :: String =
+    let fieldName :: T.Text =
             adjoinClassName className $ name (fieldInfo :: FieldInfo)
-        fieldDesc :: String = descriptor (fieldInfo :: FieldInfo)
+        fieldDesc :: T.Text = descriptor (fieldInfo :: FieldInfo)
         fieldAccessFlags = accessFlags (fieldInfo :: FieldInfo)
-     in debugLogger ("Reading field: " ++ fieldName) $
+     in debugLogger ("Reading field: " ++ T.unpack fieldName) $
         ((fieldName, fieldDesc), fieldAccessFlags)
 
 getFields :: RawClassFile -> [NamedField]

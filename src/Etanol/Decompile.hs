@@ -23,6 +23,7 @@ module Etanol.Decompile
     ) where
 
 import Data.Binary (Word16, Word32, Word8)
+import qualified Data.Text as T
 
 import ByteCodeParser.BasicTypes
 import ByteCodeParser.Instructions
@@ -34,6 +35,9 @@ import Etanol.Types
 import Data.Graph.Inductive.Dot (fglToDot, showDot)
 import Data.Graph.Inductive.Graph
 import Data.Graph.Inductive.PatriciaTree
+
+import qualified Data.Vector as V
+import Data.Vector ((!))
 
 data DNodeData = DNodeData
                 --dcode :: DCodeAtom
@@ -51,9 +55,9 @@ data DCodeAtom
     | LoadPrimaryS { ucode :: [Word8]
                    , pos :: Int }
     | GetStaticS { ucode :: [Word8]
-                 , fieldname :: String }
+                 , fieldname :: T.Text }
     | PutStaticS { ucode :: [Word8]
-                 , fieldname :: String }
+                 , fieldname :: T.Text }
 
 primLoadIndexed, primLoadInbuilt0, primLoadInbuilt1, primLoadInbuilt2, primLoadInbuilt3 ::
        [Word8]
@@ -83,16 +87,16 @@ equivNoOp :: [Word8] -- instructions that have no effect on analysis
 equivNoOp = [0] ++ [2 .. 15] ++ [96 .. 131] ++ [133 .. 147] ++ [148 .. 152]
 
 --         noop   loadconst     math         cast          compare
-javaNamify :: String -> String
+javaNamify :: T.Text -> T.Text
 javaNamify =
-    map (\x ->
+    T.map (\x ->
              if x == '/'
                  then '.'
                  else x)
 
-getFieldName :: [ConstantInfo] -> Int -> FieldID
+getFieldName :: V.Vector ConstantInfo -> Int -> FieldID
 getFieldName cp pos =
-    let fld = cp !! pos
+    let fld = cp ! pos
         cn =
             string $
             info $ cp !@ (nameIndex $ info $ cp !@ (classIndex $ info fld))
@@ -101,9 +105,9 @@ getFieldName cp pos =
         des = string $ info $ cp !@ (descriptorIndex nt)
      in (javaNamify $ adjoinClassName cn nm, des)
 
-getMethodName :: [ConstantInfo] -> Int -> MethodID
+getMethodName :: V.Vector ConstantInfo -> Int -> MethodID
 getMethodName cp pos =
-    let mthd = cp !! pos
+    let mthd = cp ! pos
         cn =
             string $
             info $ cp !@ (nameIndex $ info $ cp !@ (classIndex $ info mthd))

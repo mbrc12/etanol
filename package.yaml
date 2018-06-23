@@ -26,6 +26,7 @@ dependencies:
 - filepath >= 1.4
 - containers >= 0.5.10
 - cereal >= 0.5.5
+- cereal-text >= 0.1.0.2
 - fgl-visualize >= 0.1
 - process >= 1.6
 - yaml >= 0.8.20
@@ -33,6 +34,10 @@ dependencies:
 - bytestring >= 0.10.8.2
 - binary >= 0.8.5.1
 - zip-archive >= 0.3.2.4
+- text >= 1.2.2.2
+- vector >= 0.12
+- cereal-vector >= 0.2
+- optparse-applicative >= 0.14
 
 library:
   source-dirs: src
@@ -45,6 +50,7 @@ executables:
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
+    - -O2
     dependencies:
     - etanol
     - bytecode-parser
