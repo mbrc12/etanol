@@ -1,5 +1,5 @@
 {-# LANGUAGE DuplicateRecordFields, OverloadedStrings, MultiWayIf,
-  BangPatterns #-}
+  BangPatterns, ViewPatterns #-}
 
 module Etanol.Analysis
     ( isFinalStaticField
@@ -52,11 +52,17 @@ import Etanol.Decompile
 import Etanol.MonadFX
 import Etanol.Types
 
+import qualified Data.ByteString.Lazy as BL
+
 import EtanolTools.Unsafe
 
 type NamePrefix = T.Text -- prefixes of strings, anynames
 
 type AnyName = T.Text
+
+type CPoolProvider = ClassName -> Maybe (V.Vector ConstantInfo) 
+                                                       -- provider of constant
+                                                       -- pools 
 
 tHRESHOLD :: Int
 tHRESHOLD = 50
@@ -172,21 +178,21 @@ checkCastOp = 192
 
 -- When reading an index from the bytecode into the constantPool, decrement it by 1, as is done here
 -- using pred
-toIndex :: [Word8] -> Word32
-toIndex =
-    fromIntegral .
-    pred .
-    sum .
-    map (uncurry (*)) . zip (map (256 ^) [0 ..]) . map fromIntegral . reverse
+toIndex :: BL.ByteString -> Word32
+toIndex xs =
+    fromIntegral $!
+    pred $!
+    sum $!
+    map (uncurry (*)) $! zip (map (256 ^) [0 ..]) $! map fromIntegral $! reverse $! BL.unpack xs
 
 -- local heap indices do not need decrementing.
-toLocalHeapIndex :: [Word8] -> Int
-toLocalHeapIndex = fromIntegral . succ . toIndex
+toLocalHeapIndex :: BL.ByteString -> Int
+toLocalHeapIndex xs = fromIntegral $! succ $! toIndex xs
 
 isFinalStaticField :: V.Vector ConstantInfo -> FieldDB -> Int -> Maybe Bool
-isFinalStaticField cpool fieldDB idx =
-    let fid = getFieldName cpool idx
-        ftype  = fieldDB !? fid
+isFinalStaticField !cpool fieldDB !idx =
+    let !fid = getFieldName cpool idx
+        !ftype  = fieldDB !? fid
      in if isNothing ftype
             then Nothing
             else if ftype == Just Normal
@@ -197,8 +203,8 @@ uniques :: [AnyID] -> [AnyID]
 uniques = map (unsafeHead "uniques") . group . sort
 
 data AnyID
-    = EFieldID { fieldID :: FieldID }
-    | EMethodID { methodID :: MethodID }
+    = EFieldID { fieldID :: !FieldID }
+    | EMethodID { methodID :: !MethodID }
     deriving (Eq, Ord)
 
 instance Show AnyID where
@@ -206,8 +212,8 @@ instance Show AnyID where
     show (EMethodID m) = "method " ++ T.unpack (fst m) ++ ":" ++ T.unpack (snd m)
 
 data AnyData
-    = EFieldData { fieldData :: NamedField }
-    | EMethodData { methodData :: NamedMethodCode }
+    = EFieldData { fieldData :: !NamedField }
+    | EMethodData { methodData :: !NamedMethodCode }
     deriving (Show, Eq)
 
 isField :: AnyID -> Bool
@@ -219,25 +225,30 @@ isMethod (EMethodID _) = True
 isMethod _ = False
 
 -- Figure out the direct dependencies of a piece of code given the constant pool
-dependencies :: V.Vector ConstantInfo -> [CodeAtom] -> [AnyID]
-dependencies cpool codes = uniques $ depsMethod cpool codes
+dependencies :: V.Vector ConstantInfo -> V.Vector CodeAtom -> [AnyID]
+dependencies cpool !codes = uniques $! depsMethod cpool codes
 
 -- Note that this does not need to account for new or anewarray or multianewarray as
 -- their constructors are called shortly after these declarations, including them in
 -- the dependencies anyway
-depsMethod :: V.Vector ConstantInfo -> [CodeAtom] -> [AnyID]
-depsMethod cpool [] = []
-depsMethod cpool ((idx, op:rest):restcode)
-    | op `elem` [getFieldOp, putFieldOp, getStatic, putStatic] =
-        let idx = toIndex rest
-            fld = getFieldName cpool $ fromIntegral idx
-         in [EFieldID fld] ++ depsMethod cpool restcode
-    | op `elem` [invokeSpecialOp, invokeStaticOp, invokeVirtualOp] =
-        let idx = toIndex rest
-            mthd = getMethodName cpool $ fromIntegral idx
-         in [EMethodID mthd] ++ depsMethod cpool restcode
-    | otherwise = depsMethod cpool restcode
+depsMethod :: V.Vector ConstantInfo -> V.Vector CodeAtom -> [AnyID]
+depsMethod cpool vca
+    | vca == V.empty    = []         ---((idx, op:rest):restcode)
+    | otherwise         = 
+        if  | op `elem` [getFieldOp, putFieldOp, getStatic, putStatic] ->
+                let !idx = toIndex rest
+                    !fld = getFieldName cpool $ fromIntegral idx
+                 in (EFieldID fld) : (depsMethod cpool restcode)
+            | op `elem` [invokeSpecialOp, invokeStaticOp, invokeVirtualOp] ->
+                let !idx = toIndex rest
+                    !mthd = getMethodName cpool $ fromIntegral idx
+                 in (EMethodID mthd) : (depsMethod cpool restcode)
+            | otherwise     -> depsMethod cpool restcode
 
+            where (e, bs)  = V.head vca
+                  restcode = V.tail vca
+                  op       = BL.head bs
+                  rest     = BL.tail bs
 data Status
     = Analyzing
     | NotAnalyzed
@@ -254,13 +265,13 @@ type CPoolMap = M.Map ClassName (V.Vector ConstantInfo)
 
 -- if empty list then print error else return head
 unsafeHead :: String -> [a] -> a
-unsafeHead err xs =
+unsafeHead !err xs =
     if null xs
         then (error err)
         else (head xs)
 
-getConstantPoolForThing :: CPoolMap -> AnyID -> (V.Vector ConstantInfo)
-getConstantPoolForThing cmap thing =
+getConstantPoolForThing :: CPoolProvider -> AnyID -> (V.Vector ConstantInfo)
+getConstantPoolForThing !cpp !thing =
     if isNothing result
         then error $ "Constant Pool does not exist for " ++ T.unpack cn ++ "."
         else fromJust result
@@ -268,29 +279,29 @@ getConstantPoolForThing cmap thing =
     toName :: AnyID -> AnyName
     toName (EFieldID f) = fst f
     toName (EMethodID m) = fst m
-    cn = getClassName $ toName thing
-    result = cmap !? cn
+    cn = getClassName $! toName thing
+    result = cpp cn
 
 -- functions for analysis
 -- | analyseAll is the main entry point for analysis.
 -- | Note that by implementation, analyseAll must always return (empty map, _, _).
 analyseAll ::
-       CPoolMap
+       CPoolProvider
     -> LoadedThings
     -> LoadedThingsStatus
     -> FieldDB
-    -> MethodDB -- old 
+    -> MethodDB  
     -> FieldNullabilityDB
     -> MethodNullabilityDB
     -> (LoadedThingsStatus, FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB) -- new values
-analyseAll cmap loadedThings loadedThingsStatus fDB mDB n_fDB n_mDB =
+analyseAll !cpp !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_mDB =
     if M.null loadedThingsStatus
         then (loadedThingsStatus, fDB, mDB, n_fDB, n_mDB)
-        else let (thing, _) = M.elemAt 0 loadedThingsStatus
-                 cpool = getConstantPoolForThing cmap thing
-                 (loadedThingsStatus', fDB', mDB', n_fDB', n_mDB') =
+        else let (!thing, _) = M.elemAt 0 loadedThingsStatus
+                 cpool = getConstantPoolForThing cpp thing
+                 (!loadedThingsStatus', !fDB', !mDB', !n_fDB', !n_mDB') =
                      analysisDriver
-                         cmap
+                         cpp
                          cpool
                          loadedThings
                          loadedThingsStatus
@@ -301,8 +312,8 @@ analyseAll cmap loadedThings loadedThingsStatus fDB mDB n_fDB n_mDB =
                          thing
               in debugLogger
                      ("LoadedThingsStatus: " ++
-                      (show $ M.size loadedThingsStatus)) $
-                 analyseAll cmap loadedThings loadedThingsStatus' fDB' mDB' n_fDB' n_mDB'
+                      (show $! M.size loadedThingsStatus)) $
+                 analyseAll cpp loadedThings loadedThingsStatus' fDB' mDB' n_fDB' n_mDB'
 
 toRepr :: AnyID -> String
 toRepr (EFieldID f) = " Field " ++ T.unpack (fst f) ++ ":" ++ T.unpack (snd f)
@@ -310,7 +321,7 @@ toRepr (EMethodID m) = " Method " ++ T.unpack (fst m) ++ ":" ++ T.unpack (snd m)
 
 -- assumes thing to be in loadedThings
 analysisDriver ::
-       CPoolMap
+       CPoolProvider
     -> V.Vector ConstantInfo
     -> LoadedThings
     -> LoadedThingsStatus
@@ -320,7 +331,7 @@ analysisDriver ::
     -> MethodNullabilityDB
     -> AnyID -- target  
     -> (LoadedThingsStatus, FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB) -- new values
-analysisDriver cmap cpool loadedThings loadedThingsStatus fDB mDB n_fDB n_mDB thing -- thing is guaranteed to be in loadedThings 
+analysisDriver cpp !cpool !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_mDB !thing -- thing is guaranteed to be in loadedThings 
  =
     let thingdata =
             debugLogger ("Here" ++ show (loadedThings !? thing)) $
@@ -339,16 +350,16 @@ analysisDriver cmap cpool loadedThings loadedThingsStatus fDB mDB n_fDB n_mDB th
                         -- recursive analysis.
             else debugLogger ("Analyzing " ++ show thing) $
                  if (loadedThingsStatus ! thing) == Analyzing -- found loop
-                     then let mID = methodID thing
-                              mDB' = M.insert mID UnanalyzableMethod mDB
-                              n_mDB' = M.insert mID UnanalyzableNullMethod n_mDB
+                     then let !mID = methodID thing
+                              !mDB' = M.insert mID UnanalyzableMethod mDB
+                              !n_mDB' = M.insert mID UnanalyzableNullMethod n_mDB
                            in (M.delete thing loadedThingsStatus, fDB, mDB', n_fDB, n_mDB')
-                     else let mID = methodID thing
-                              loadedThingsStatus' =
+                     else let !mID = methodID thing
+                              !loadedThingsStatus' =
                                   M.insert thing Analyzing loadedThingsStatus
-                              (loadedThingsStatus'', fDB', mDB', n_fDB', n_mDB') =
+                              (!loadedThingsStatus'', !fDB', !mDB', !n_fDB', !n_mDB') =
                                   analyseMethod
-                                      cmap
+                                      cpp
                                       cpool
                                       loadedThings
                                       loadedThingsStatus'
@@ -368,9 +379,9 @@ isBasic s = (T.head s) `elem` ['B', 'C', 'D', 'F', 'I', 'J', 'S', 'Z']
 
 -- checks if it is final static or basic type atm, assumes AnyID is a isField
 analyseField :: V.Vector ConstantInfo -> LoadedThings -> FieldDB -> AnyID -> FieldDB
-analyseField cpool loadedThings fDB thing =
-    let fID = fieldID thing
-        ((_, fDesc), fAccessFlags) = fieldData (loadedThings ! thing)
+analyseField cpool !loadedThings !fDB !thing =
+    let !fID = fieldID thing
+        ((_, !fDesc), !fAccessFlags) = fieldData (loadedThings ! thing)
         verdict =
             if (AFFinal `elem` fAccessFlags) && (AFStatic `elem` fAccessFlags)
                 then FinalStatic
@@ -382,7 +393,7 @@ analyseField cpool loadedThings fDB thing =
 analyseField_null :: V.Vector ConstantInfo -> LoadedThings -> FieldNullabilityDB -> AnyID -> FieldNullabilityDB
 analyseField_null !cpool !loadedThings !n_fDB !thing =
     let fID = fieldID thing
-        ((_, fDesc), fAccessFlags) = fieldData (loadedThings ! thing)
+        ((_, !fDesc), !fAccessFlags) = fieldData (loadedThings ! thing)
         verdict =
             if (AFFinal `elem` fAccessFlags) && (AFStatic `elem` fAccessFlags)
                 then NonNullableField       -- first approximation,
@@ -398,7 +409,7 @@ analyseField_null !cpool !loadedThings !n_fDB !thing =
 
 -- | Feeding mechanism through the analysisDriver. See `analyseMethod`
 feedAll ::
-       CPoolMap
+       CPoolProvider
     -> LoadedThings
     -> LoadedThingsStatus
     -> FieldDB
@@ -408,12 +419,12 @@ feedAll ::
     -> [AnyID]
     -> (LoadedThingsStatus, FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB)
 feedAll _ _ loadedThingsStatus fDB mDB n_fDB n_mDB [] = (loadedThingsStatus, fDB, mDB, n_fDB, n_mDB)
-feedAll !cmap !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_mDB (aID:rest) =
-    let (lth', fdb', mdb', n_fdb', n_mdb') =
+feedAll cpp !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_mDB (aID:rest) =
+    let (!lth', !fdb', !mdb', !n_fdb', !n_mdb') =
             if M.member aID loadedThingsStatus
                 then analysisDriver
-                         cmap
-                         (getConstantPoolForThing cmap aID)
+                         cpp
+                         (getConstantPoolForThing cpp aID)
                          loadedThings
                          loadedThingsStatus
                          fDB
@@ -423,12 +434,12 @@ feedAll !cmap !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_mDB (aID:res
                          aID
                                                 -- this is why you need the cmap to analyseMethod, as it can recursively call this.
                 else (loadedThingsStatus, fDB, mDB, n_fDB, n_mDB)
-     in feedAll cmap loadedThings lth' fdb' mdb' n_fdb' n_mdb' rest
+     in feedAll cpp loadedThings lth' fdb' mdb' n_fdb' n_mdb' rest
 
 -- checks properties for method
 -- currently no recursive method is analyzed to be pure
 analyseMethod ::
-       CPoolMap
+       CPoolProvider
     -> V.Vector ConstantInfo
     -> LoadedThings
     -> LoadedThingsStatus
@@ -438,28 +449,28 @@ analyseMethod ::
     -> MethodNullabilityDB
     -> AnyID
     -> (LoadedThingsStatus, FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB)
-analyseMethod !cmap !cpool !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_mDB !thing =
-    let mID = methodID thing
-        mName = fst mID
-        mDes = snd mID
-        mData = methodData (loadedThings ! thing)
-        (_, mCode, mCFG, af) = mData
-        deps = dependencies cpool mCode
-        mDeps = filter isMethod deps
-        fDeps = filter isField deps
-        mNAl =
-            map EMethodID $
-            filter (\x -> M.notMember x mDB) $ map methodID mDeps
-        fNAl =
-            map EFieldID $ filter (\x -> M.notMember x fDB) $ map fieldID fDeps
-        nAl = mNAl ++ fNAl
-        nA = filter (\x -> M.notMember x loadedThings) nAl
+analyseMethod cpp !cpool !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_mDB !thing =
+    let !mID = methodID thing
+        !mName = fst mID
+        !mDes = snd mID
+        !mData = methodData (loadedThings ! thing)
+        (_, !mCode, !mCFG, !af) = mData
+        !deps = dependencies cpool mCode
+        !mDeps = filter isMethod deps
+        !fDeps = filter isField deps
+        !mNAl =
+            map EMethodID $!
+            filter (\x -> M.notMember x mDB) $! map methodID mDeps
+        !fNAl =
+            map EFieldID $! filter (\x -> M.notMember x fDB) $! map fieldID fDeps
+        !nAl = mNAl ++ fNAl
+        !nA = filter (\x -> M.notMember x loadedThings) nAl
                         -- not previously analyzed and also not loaded, but required for analysis
      in debugLogger
             ("Constant pool : " ++
-             (if (cpool == getConstantPoolForThing cmap thing)
+             (if (cpool == getConstantPoolForThing cpp thing)
                   then "OK"
-                  else error "Constant pool is WRONG!")) $
+                  else error "Constant pool is WRONG!")) $!
         if (AMNative `elem` af ||
             AMSynchronized `elem` af || null mCode) 
                         -- || AMVarargs `elem` af || null mCode) -- disabled 
@@ -482,7 +493,7 @@ analyseMethod !cmap !cpool !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n
                                    , M.insert mID UnanalyzableNullMethod n_mDB )
                               else let (loadedThingsStatus', fDB', mDB', n_fDB', n_mDB') =
                                            feedAll
-                                               cmap
+                                               cpp
                                                loadedThings
                                                loadedThingsStatus
                                                fDB
@@ -495,10 +506,10 @@ analyseMethod !cmap !cpool !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n
                                         -- recursively. So we can now safely analyse this method itself
                                         -- But it may happen that this method itself got into a loop and was analyzed already
                                     in if M.member thing loadedThingsStatus'
-                                           then let desidx =
+                                           then let !desidx =
                                                         descriptorIndices2 $
                                                         mDes
-                                                    initialHeap =
+                                                    !initialHeap =
                                                         M.fromList desidx
                                                     srefpred ::
                                                            StackObject
@@ -536,7 +547,7 @@ analyseMethod !cmap !cpool !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n
                                                     -- or basic which are
                                                     -- nonnullable
                                                     
-                                                    lh_null = 
+                                                    !lh_null = 
                                                         M.map 
                                                             replaceRefWithNull
                                                             lh'
@@ -619,49 +630,7 @@ analyseMethod !cmap !cpool !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n
 -- strong impure and unanalyzable then it is unanalyzable, although operationally both of these are
 -- the same currently.
 -- --------------------------------------------------------------------
-{--
-data MutationType = BasicMutation | ObjectMutation      -- type of mutation, basic mutation if only basic fields are mutated 
-                        deriving (Show, Eq, Ord)
 
-type Mutation = (Int, MutationType)
-
-verdictifyMethod :: [ConstantInfo] 
-                    -> FieldDB 
-                    -> MethodDB 
-                    -> NamedMethodCode 
-                    -> MethodAnalysisResult
-verdictifyMethod cpool fDB mDB (mID, mCode, mCFG, mAF) = 
-        let     deps = dependencies cpool mCode
-                stat = getStaticFields cpool mCode                              -- static field accesses by method
-                nofs = filter (\x -> (fDB ! x) /= FinalStatic) stat             -- non final static ones
-                mdep = map methodID $ filter isMethod deps
-                unan = filter (\x -> (mDB ! x) == UnanalyzableMethod) mdep      -- unanalyzable
-                stim = filter (\x -> (mDB ! x) == StrongImpure) mdep            -- strong impure
-        in      if nonEmpty unan
-                then UnanalyzableMethod
-                else    if nonEmpty stim
-                        then StrongImpure
-                        else    if nonEmpty nofs           -- accesses some non final static field
-                                then Impure
-                                else let mutations = sort $ getMutations cpool mDB mCFG -- indices of the parameters potentially modified / mutated
-                                     in  if null mutations
-                                         then Pure
-                                         else if length mutations == 1 && head mutations == (0, BasicMutation)   -- modifies only this in basic fields
-                                              then Local
-                                              else Impure
-
--- | get static fields used in code
-getStaticFields :: V.Vector ConstantInfo -> [CodeAtom] -> [FieldID]
-getStaticFields cpool ((_, (op : rest)) : restcode) 
-        | op `elem` [getStatic, putStatic]      =     let idx = toIndex rest
-                                                      in  (getFieldName cpool $ fromIntegral idx) : getStaticFields cpool restcode
-        | otherwise                             =     getStaticFields cpool restcode
-
-
--- | Get all mutations done to passed parameters in code
-getMutations :: V,Vector ConstantInfo -> MethodDB -> CFG -> [Mutation]
-getMutations cpool mDB cfg = undefined --stepThrough cpool mDB cfg theStart
---}
 data StackObject
     = SBasic
     | SBasicLong            -- Category 2, needed for analyseAtom
@@ -990,6 +959,7 @@ setMuts ms = do
 addMut :: Int -> Int -> AnalysisM ()
 addMut pos v = do
     mutl <- getMuts
+    when (length mutl <= pos) $ debugLoggerM "mutl problem!"
     setMuts $ replaceElem mutl pos (v : (mutl !! pos))
 
 getMethodName_null :: NAnalysisM MethodID
@@ -1039,6 +1009,8 @@ getAnalysis = do
     whenExit (all (== theEnd) pos) Pure -- all of them are at the end
     stks <- getStacks
     locs <- getLocalHeaps
+    when (not (length cas == length locs && length locs == length stks)) $
+        error "lengths of cas, locs, stks not all equal!"
     results <-
         forM [0 .. length cas - 1] $ \j ->
             exceptify $ analyseAtom j (cas !! j) (locs !! j) (stks !! j)
@@ -1059,6 +1031,9 @@ getAnalysis_null = do
     whenExit (all (== theEnd) pos) NonNullableMethod
     stks <- getStacks_null
     locs <- getLocalHeaps_null
+    
+    when (not (length cas == length locs && length locs == length stks)) $
+        error "lengths of cas, locs, stks not all equal!_null"
 
     results <-
         forM [0 .. length cas - 1] $ \j ->
@@ -1091,8 +1066,8 @@ storesi = [54 .. 58] -- indexed
 
 stores = stores1 ++ stores2 ++ storesi
 
-getIdxOp :: [Word8] -> Int
-getIdxOp (op:rest) =
+getIdxOp :: BL.ByteString -> Int
+getIdxOp (BL.uncons -> Just (op, rest)) =
     if op `elem` (loadsi ++ storesi)
         then toLocalHeapIndex rest
         else if | op `elem` [26, 30, 34, 38, 42, 59, 63, 67, 71, 75] -> 0
@@ -1124,9 +1099,9 @@ Also if pure functions return references, they must be fresh and not any of the 
 --}
 
 analyseAtom :: Int -> CodeAtom -> LocalHeap -> Stack -> AnalysisM MethodType
-analyseAtom j (pos, []) loc stk = return Pure
-analyseAtom j (pos, ca@(op:rest)) loc stk
+analyseAtom j (pos, BL.uncons -> Nothing) loc stk = return Pure
                 --traceM $ "Code : " ++ show pos ++ " : " ++ show ca
+analyseAtom j (pos, ca@(BL.uncons -> Just (op, rest))) loc stk
  = do
     whenExit
         (op == monitorEnterOp ||
@@ -1224,7 +1199,7 @@ analyseAtom j (pos, ca@(op:rest)) loc stk
                                                                                         --               SReference Int then this is also int SReference
     when (op == putFieldOp) $ do
         let ftype = getSTypeOfFieldWord8 rest cpool
-            !obj = stk !! 1 -- item 2    
+            !obj = head (tail stk) -- item 2    
         if ftype == OFReference
             then exitWith Impure
             else do
@@ -1414,8 +1389,8 @@ compareConsume2 = [148 .. 152]
 arrayStoresConsume3 = [79 .. 86]
 
 analyseAtom_null :: Int -> CodeAtom -> NLocalHeap -> NStack -> NAnalysisM MethodNullabilityType
-analyseAtom_null j (pos, []) loc stk = return NonNullableMethod
-analyseAtom_null j (pos, ca@(op:rest)) loc stk = do
+analyseAtom_null j (pos, BL.uncons -> Nothing) loc stk = return NonNullableMethod
+analyseAtom_null j (pos, ca@(BL.uncons -> Just (op, rest))) loc stk = do
     whenExit (op == monitorEnterOp || 
               op == monitorExitOp  ||
               op == invokeInterfaceOp ||
@@ -1691,7 +1666,7 @@ analyseAtom_null j (pos, ca@(op:rest)) loc stk = do
 
 
 
-getFieldIDWord8 :: [Word8] -> V.Vector ConstantInfo -> FieldID
+getFieldIDWord8 :: BL.ByteString -> V.Vector ConstantInfo -> FieldID
 getFieldIDWord8 rest cpool 
     =   let idx = toIndex rest
         in getFieldName cpool (fromIntegral idx)
@@ -1747,7 +1722,7 @@ isParamRef :: StackObject -> Maybe Int
 isParamRef (SReference x) = Just x
 isParamRef _ = Nothing
 
-getSTypeOfConstantWord8 :: [Word8] -> V.Vector ConstantInfo -> ObjectField
+getSTypeOfConstantWord8 :: BL.ByteString -> V.Vector ConstantInfo -> ObjectField
 getSTypeOfConstantWord8 rest cpool =
     let idx = fromIntegral $ toIndex rest
         vp = constType $ cpool !@ idx
@@ -1761,7 +1736,7 @@ getSTypeOfConstantWord8 rest cpool =
             _ -> OFUnknown
 
 isFinalStaticFieldWord8MaybeStripped ::
-       [Word8] -> V.Vector ConstantInfo -> FieldDB -> Bool
+       BL.ByteString -> V.Vector ConstantInfo -> FieldDB -> Bool
 isFinalStaticFieldWord8MaybeStripped a b c =
     (\m ->
          if isJust m
@@ -1769,7 +1744,7 @@ isFinalStaticFieldWord8MaybeStripped a b c =
              else False) $
     isFinalStaticFieldWord8 a b c
 
-isFinalStaticFieldWord8 :: [Word8] -> V.Vector ConstantInfo -> FieldDB -> Maybe Bool
+isFinalStaticFieldWord8 :: BL.ByteString -> V.Vector ConstantInfo -> FieldDB -> Maybe Bool
 isFinalStaticFieldWord8 rest cpool fdb =
     let idx = toIndex rest
         fID = getFieldName cpool (fromIntegral idx)
@@ -1778,7 +1753,7 @@ isFinalStaticFieldWord8 rest cpool fdb =
             then Just $ fromJust fty == FinalStatic
             else Nothing
 
-getSTypeOfFieldWord8 :: [Word8] -> V.Vector ConstantInfo -> ObjectField
+getSTypeOfFieldWord8 :: BL.ByteString -> V.Vector ConstantInfo -> ObjectField
 getSTypeOfFieldWord8 rest cpool =
     getSTypeOfField (fromIntegral $ toIndex rest) cpool
 

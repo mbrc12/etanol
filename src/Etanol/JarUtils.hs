@@ -2,7 +2,8 @@
 
 module Etanol.JarUtils
     ( readRawClassFilesFromPath
-    , createJar
+    , classesOnDemand
+    , classesInPath
     ) where
 
 import ByteCodeParser.BasicTypes
@@ -14,6 +15,10 @@ import System.Directory (doesDirectoryExist, doesFileExist)
 import System.Exit (die)
 import qualified Codec.Archive.Zip as Z
 import qualified Data.ByteString.Lazy as BL
+import qualified Data.Text as T
+
+import qualified Data.Map as M
+import Data.Map ((!?))
 
 import Data.Maybe
 import Control.Monad
@@ -51,9 +56,6 @@ extractJar path = do
     U.infoLoggerM $ "Reading " ++ path
 
     fileData <- BL.readFile path
-    
-    performMajorGC
-
     return $ Z.toArchive fileData
     
 
@@ -113,8 +115,8 @@ readRawClassFilesFromPath path = do
     
     U.infoLoggerM "Parsing files."
 
-    let !classNames = findClassNames archive
-        !result = map (\cname ->
+    let classNames = findClassNames archive
+        result = map (\cname ->
                      U.debugLogger 
                         ("Parsing file : " ++ cname) $
                         readRawByteString 
@@ -124,4 +126,31 @@ readRawClassFilesFromPath path = do
     U.infoLoggerM $ "Parsed " ++ show (length result) ++ " files."
 
     return result
-    
+
+convertSlashToDot = T.map (\c -> if c == '/' then '.' else c)
+
+classesOnDemand :: FilePath -> IO (ClassName -> Maybe RawClassFile)
+classesOnDemand path = do
+    archive <- giveMeAnArchive path
+
+    let classPaths = findClassNames archive
+        classNameToPath = M.fromList $
+                            map (\path -> U.debugLogger ("Parsing " ++ path) $
+                                    (convertSlashToDot $ thisClass $ 
+                                        readRawByteString (getEntry path archive),
+                                     path))
+                                classPaths  
+                                     
+    return $ ((fmap (\a -> readRawByteString $ getEntry a archive)) . (classNameToPath !?))
+
+classesInPath :: FilePath -> IO [ClassName]
+classesInPath path = do
+    archive <- giveMeAnArchive path
+
+    let classPaths = findClassNames archive
+        classNames = map (\path -> U.debugLogger ("Reading name of " ++ path) $
+                                    (convertSlashToDot . thisClass . readRawByteString)
+                                        (getEntry path archive))
+                        classPaths
+    return classNames
+

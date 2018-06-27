@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveGeneric, DefaultSignatures, OverloadedStrings,
-  ScopedTypeVariables, DuplicateRecordFields #-}
+  ScopedTypeVariables, DuplicateRecordFields, BangPatterns #-}
 
 {- Etanol.Types. Includes basic Database functionality for Etanol field 
 and method data. Also includes helper functions for Etanol.Analysis -}
@@ -47,8 +47,12 @@ module Etanol.Types
     , adjoinClassName
     , toFieldID
     , toMethodID
+    , AllDB(..)
+    , loadAllDB
+    , saveAllDB
     ) where
 
+import qualified Data.Vector as V 
 import qualified Data.Map.Strict as M
 import qualified Data.Text as T
 import Data.Map.Strict ((!), (!?))
@@ -71,7 +75,8 @@ import Data.Serialize.Text
 import qualified Data.Yaml as Y
 import GHC.Generics
 
-import EtanolTools.Unsafe
+import qualified EtanolTools.Unsafe as U
+import Control.Monad
 
 unsafeHead :: String -> [a] -> a
 unsafeHead err xs =
@@ -193,6 +198,31 @@ type FieldNullabilityDB = M.Map FieldID FieldNullabilityType
 
 type MethodNullabilityDB = M.Map MethodID MethodNullabilityType
 
+data AllDB = AllDB 
+        { afieldDB       :: FieldDB
+        , amethodDB      :: MethodDB
+        , afieldDB_null  :: FieldNullabilityDB
+        , amethodDB_null :: MethodNullabilityDB
+        } deriving (Show, Generic)
+
+instance Serialize AllDB
+
+loadAllDB :: FilePath -> IO AllDB
+loadAllDB path = do
+    exs <- doesFileExist path
+    when (not $ exs) $
+        die $ "File " ++ path ++ " does not exist!"
+    bs <- B.readFile path
+    let dec = decode bs
+    case dec of 
+        Right alldb -> return alldb
+        Left  _     -> die "Invalid database file!"
+
+saveAllDB :: FilePath -> AllDB -> IO ()
+saveAllDB path db = do
+    B.writeFile path (encode db)
+    U.debugLoggerM $ "Written database to " ++ path
+
 isInit :: FilePath -> IO Bool
 isInit configLocation =
     let fieldDBPath = configLocation </> fieldsFile
@@ -297,26 +327,26 @@ fixClassName =
 
 type Descriptor = [(Int, Bool)] -- see `descriptorIndices` in ByteCodeParser.Reader, for how this works
 
-type NamedMethodCode = (MethodID, [CodeAtom], CFG, [MethodAccessFlag])
+type NamedMethodCode = (MethodID, V.Vector CodeAtom, CFG, [MethodAccessFlag])
 
-findCodeAttribute :: [AttributeInfo] -> [CodeAtom]
+findCodeAttribute :: [AttributeInfo] -> V.Vector CodeAtom
 findCodeAttribute ainfo =
     if null codes
-        then []
-        else (code :: AInfo -> [CodeAtom]) $ attributeInfo $ head codes
+        then V.empty
+        else (code :: AInfo -> V.Vector CodeAtom) $ attributeInfo $ head codes
   where
     codes = filter (\at -> attributeType at == ATCode) ainfo -- there is expected to be only 1 code attribute in a method
 
 getMethod :: ClassName -> MethodInfo -> NamedMethodCode
 getMethod className methodInfo =
-    let methodName :: T.Text =
-            adjoinClassName className $ name (methodInfo :: MethodInfo)
-        methodDescriptor :: T.Text = descriptorString (methodInfo :: MethodInfo)
-        methodCode :: [CodeAtom] =
-            findCodeAttribute $ attributes (methodInfo :: MethodInfo)
-        methodCFG = generateControlFlowGraph methodCode
-        methodAccessFlags = accessFlags (methodInfo :: MethodInfo)
-     in debugLogger ("Reading method: " ++ T.unpack methodName) $
+    let !methodName =
+            adjoinClassName className $! name (methodInfo :: MethodInfo) :: T.Text
+        !methodDescriptor = descriptorString (methodInfo :: MethodInfo) :: T.Text
+        !methodCode  =
+            findCodeAttribute $! attributes (methodInfo :: MethodInfo) :: V.Vector CodeAtom
+        !methodCFG = generateControlFlowGraph (V.toList methodCode)
+        !methodAccessFlags = accessFlags (methodInfo :: MethodInfo)
+     in U.debugLogger ("Reading method: " ++ T.unpack methodName) $
         ( (methodName, methodDescriptor)
         , methodCode
         , methodCFG
@@ -331,22 +361,22 @@ toFieldID (x, _) = x
 getMethods :: RawClassFile -> [NamedMethodCode]
 getMethods cf = map (getMethod className) mthds
   where
-    className = fixClassName $ thisClass cf
+    className = fixClassName $! thisClass cf
     mthds = methods cf
 
 type NamedField = (FieldID, [FieldAccessFlag])
 
 getField :: ClassName -> FieldInfo -> NamedField
 getField className fieldInfo =
-    let fieldName :: T.Text =
-            adjoinClassName className $ name (fieldInfo :: FieldInfo)
-        fieldDesc :: T.Text = descriptor (fieldInfo :: FieldInfo)
-        fieldAccessFlags = accessFlags (fieldInfo :: FieldInfo)
-     in debugLogger ("Reading field: " ++ T.unpack fieldName) $
+    let !fieldName  =
+            adjoinClassName className $! name (fieldInfo :: FieldInfo) :: T.Text
+        !fieldDesc = descriptor (fieldInfo :: FieldInfo) :: T.Text
+        !fieldAccessFlags = accessFlags (fieldInfo :: FieldInfo)
+     in U.debugLogger ("Reading field: " ++ T.unpack fieldName) $
         ((fieldName, fieldDesc), fieldAccessFlags)
 
 getFields :: RawClassFile -> [NamedField]
 getFields cf = map (getField className) flds
   where
-    className = fixClassName $ thisClass cf
+    className = fixClassName $! thisClass cf
     flds = fields cf

@@ -98,23 +98,23 @@ getFieldName :: V.Vector ConstantInfo -> Int -> FieldID
 getFieldName cp pos =
     let fld = cp ! pos
         cn =
-            string $
-            info $ cp !@ (nameIndex $ info $ cp !@ (classIndex $ info fld))
-        nt = info $ cp !@ (nameAndTypeIndex $ info fld)
-        nm = string $ info $ cp !@ (nameIndex nt)
-        des = string $ info $ cp !@ (descriptorIndex nt)
-     in (javaNamify $ adjoinClassName cn nm, des)
+            string $!
+            info $! cp !@ (nameIndex $! info $! cp !@ (classIndex $! info fld))
+        nt = info $! cp !@ (nameAndTypeIndex $! info fld)
+        nm = string $! info $! cp !@ (nameIndex nt)
+        des = string $! info $! cp !@ (descriptorIndex nt)
+     in (javaNamify $! adjoinClassName cn nm, des)
 
 getMethodName :: V.Vector ConstantInfo -> Int -> MethodID
 getMethodName cp pos =
     let mthd = cp ! pos
         cn =
-            string $
-            info $ cp !@ (nameIndex $ info $ cp !@ (classIndex $ info mthd))
-        nt = info $ cp !@ (nameAndTypeIndex $ info mthd)
-        nm = string $ info $ cp !@ (nameIndex nt)
-        des = string $ info $ cp !@ (descriptorIndex nt)
-     in (javaNamify $ adjoinClassName cn nm, des)
+            string $!
+            info $! cp !@ (nameIndex $! info $! cp !@ (classIndex $! info mthd))
+        nt = info $! cp !@ (nameAndTypeIndex $! info mthd)
+        nm = string $! info $ cp !@ (nameIndex nt)
+        des = string $! info $ cp !@ (descriptorIndex nt)
+     in (javaNamify $! adjoinClassName cn nm, des)
 
 getStatic, putStatic :: Word8
 getStatic = 178

@@ -1,14 +1,17 @@
 {-# LANGUAGE OverloadedStrings, DuplicateRecordFields,
-  DeriveGeneric, ScopedTypeVariables #-}
+  DeriveGeneric, ScopedTypeVariables, BangPatterns #-}
 
 module Etanol.Driver
     ( Config(..)
     , startpoint
     , resetConfigDirectory
-    , ifJarThenExtractAndGimmeFileName
     , dumpDatabases
+    , classDependencies
+    , classDependencyPools
+    , driver2
     ) where
 
+import Data.List (foldl', sort)
 import Control.Monad
 import qualified Data.ByteString as B
 import Data.Either
@@ -22,6 +25,7 @@ import System.Directory
     , doesFileExist
     , findExecutable
     , removeDirectoryRecursive
+    , getHomeDirectory
     )
 import System.Environment (lookupEnv)
 import System.Exit (die)
@@ -31,12 +35,30 @@ import System.Process (callCommand)
 
 import ByteCodeParser.BasicTypes
 import Etanol.Analysis
-import Etanol.Crawler
-import Etanol.JarUtils
+import qualified Etanol.Crawler  as CB
+import qualified Etanol.JarUtils as JB
 import Etanol.Decompile
 import Etanol.Types
+import Etanol.Utils
+
+import qualified Data.Map as M
+import Data.Map ((!))
+import qualified Data.Vector as V
 
 import qualified EtanolTools.Unsafe as U
+
+
+classesInPath = if U.getBackend == U.DirectoryBackend
+                then CB.classesInPath
+                else JB.classesInPath
+
+readRawClassFilesFromPath = if U.getBackend == U.DirectoryBackend
+                            then CB.readRawClassFilesFromPath
+                            else JB.readRawClassFilesFromPath
+
+classesOnDemand = if U.getBackend == U.DirectoryBackend
+                  then CB.classesOnDemand
+                  else JB.classesOnDemand
 
 fieldsYaml, methodsYaml, fieldsYaml_null, methodsYaml_null :: String
 fieldsYaml = "fields.yaml"
@@ -61,20 +83,18 @@ data Config = Config
 
 instance Y.FromJSON Config
 
-homeDir :: IO (Maybe FilePath)
-homeDir = lookupEnv "HOME"
+homeDir :: IO FilePath
+homeDir = getHomeDirectory
 
 defaultConfigFile :: IO String
 defaultConfigFile = do
     hDir <- homeDir
-    return $ "config_directory : " ++ ((fromJust hDir) </> ".etanol")
+    return $ "config_directory : " ++ ((hDir) </> ".etanol")
 
 getConfigPath :: IO FilePath
 getConfigPath = do
     hDir <- homeDir
-    when (isNothing hDir) $
-        error "No HOME set! Please set your HOME environment variable."
-    let home = fromJust hDir
+    let home = hDir
     U.infoLoggerM $ "Home directory: " ++ home
     let configpath = home </> configName
     exs <- doesFileExist configpath
@@ -106,10 +126,11 @@ getConfigDirectory = do
 endsWith :: String -> String -> Bool
 s `endsWith` t = t == reverse (take (length t) (reverse s))
 
+{--
 ifJarThenExtractAndGimmeFileName :: FilePath -> IO FilePath
 ifJarThenExtractAndGimmeFileName fp =
     if (fp `endsWith` jarExtension)
-        then do
+        then do                         
             maybeUnzip <- findExecutable unzipCommand
             when (isNothing maybeUnzip) $
                 die
@@ -127,7 +148,8 @@ ifJarThenExtractAndGimmeFileName fp =
             U.infoLoggerM "\nDone.\n"
             return unzipPath
         else return fp
-
+--}
+    
 resetConfigDirectory :: IO ()
 resetConfigDirectory = do
     dir <- getConfigDirectory
@@ -146,29 +168,47 @@ getInitialDBs config = do
     n_mDB <- getMethodDB_null config
     return (fDB, mDB, n_fDB, n_mDB)
 
+classConstantPools :: FilePath 
+                    -> IO (ClassName -> Maybe (V.Vector ConstantInfo))
+classConstantPools path = classesOnDemand path >>= return . ((fmap constantPool) .)
+                    ---            ignore this pointfree gymnastics please ^ (^.^)
+
+classDependencies :: FilePath -> IO ([ClassName] -> [ClassName])
+classDependencies path = do
+    constPoolFunction <- classConstantPools path
+    return $ resolver constPoolFunction
+
+classDependencyPools :: FilePath -> IO ([ClassName] -> [[ClassName]])
+classDependencyPools path = do
+    constPoolFunction <- classConstantPools path
+    return $ genDependencyPools constPoolFunction
+
+{--
 driver :: FilePath -> FilePath -> IO ()
 driver config path = do
     --exs <- doesDirectoryExist path
     --when (not exs) $ error "The said directory does not exist! Aborting."
-    
+    {-- 
     let backend = U.getBackend
         processingFunction = if backend == U.DirectoryBackend
                                 then readRawClassFilesInDirectory
                                 else readRawClassFilesFromPath
+        demandStream       = if backend == U.DirectoryBackend
+                                then 
 
     path' <- if backend == U.DirectoryBackend   -- if directory then you need to 
                                                 -- extract jar files
              then ifJarThenExtractAndGimmeFileName path
              else return path
-     
-    U.infoLoggerM "Reading classes.."
+    --}
     
-    rcs <- processingFunction path
+    U.infoLoggerM "Reading classes.."
+      
+    rcs <- readRawClassFilesFromPath path 
 
     (ifDB, imDB, n_ifDB, n_imDB) <- getInitialDBs config
     U.infoLoggerM "Databases loaded." 
     
-
     let 
         mthds = concatMap getMethods rcs
         flds = concatMap getFields rcs
@@ -199,6 +239,93 @@ driver config path = do
     saveMethodDB_null config n_fmDB
     U.infoLoggerM $
         "Completed. " ++ (show $ length rcs) ++ " classes loaded and analysed."
+
+--}
+
+driver2 :: FilePath -> [FilePath] -> FilePath -> IO ()
+driver2 path sources output = do
+
+    allDBs <- mapM loadAllDB sources
+    let merge = foldl' M.union M.empty
+        fDB   = merge $ map afieldDB allDBs
+        mDB   = merge $ map amethodDB allDBs
+        fDB_n = merge $ map afieldDB_null allDBs
+        mDB_n = merge $ map amethodDB_null allDBs
+    
+    cls <- classesInPath path
+    depf <- classDependencyPools path
+    let scc = depf cls 
+
+    -- the equation here is: concatMap id scc == cls
+
+    U.assertCheck (sort (concatMap id scc) == sort cls) 
+        "sort (concatMap id scc) /= sort cls"
+
+    cpoolf <- classConstantPools path
+    rcf <- classesOnDemand path
+    
+    -- the equation here is: all isJust $ map rcf cls 
+    
+    U.assertCheck (all isJust $ map rcf cls) 
+        "all isJust $ map rcf cls /= True"
+
+    let (fDB', mDB', fDB_n', mDB_n') = feedForward scc rcf cpoolf
+                                        (fDB, mDB, fDB_n, mDB_n)
+    
+    let f              = fromJust . rcf
+        currentFields  = concatMap ((map toFieldID) . getFields . f)
+                            cls
+        currentMethods = concatMap ((map toMethodID) . getMethods . f)
+                            cls
+
+        subMap m k     = M.fromList $!
+                            map (\e -> e `seq` (U.debugLogger "Indexing subMap" (e, m ! e))) k
+
+        curfDB         = subMap fDB'   currentFields
+        curmDB         = subMap mDB'   currentMethods
+        curfDB_n       = subMap fDB_n' currentFields
+        curmDB_n       = subMap mDB_n' currentMethods
+
+    U.debugLoggerM $ "Analysing and saving results to " ++ output
+
+    saveAllDB output $! AllDB 
+        { afieldDB = curfDB
+        , amethodDB = curmDB
+        , afieldDB_null = curfDB_n
+        , amethodDB_null = curmDB_n
+        }
+
+
+feedForward :: [[ClassName]]
+            -> (ClassName -> Maybe RawClassFile)
+            -> (ClassName -> Maybe (V.Vector ConstantInfo))
+            -> (FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB)
+            -> (FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB)
+feedForward [] _ _ dbs = dbs
+feedForward (!comp : rest) rcf cpoolf (fDB, mDB, fDB_n, mDB_n) =
+    let f = fromJust . rcf
+        !mthds = concatMap (getMethods . f) comp
+        !flds  = concatMap (getFields . f)  comp
+        !cnames = map (javaNamify . thisClass . f) comp
+        !mids = map toMethodID mthds
+        !fids = map toFieldID flds
+        !loadedThings = M.fromList $!
+                map (\(i, d) -> (EFieldID i, EFieldData d)) (zip fids flds) ++
+                map (\(i, d) -> (EMethodID i, EMethodData d)) (zip mids mthds)
+        !loadedStatus = M.fromList $!
+                map (\i -> (EFieldID i, NotAnalyzed)) fids ++
+                map (\i -> (EMethodID i, NotAnalyzed)) mids
+        (_, !fDB', !mDB', !fDB_n', !mDB_n') = analyseAll 
+                                            cpoolf
+                                            loadedThings
+                                            loadedStatus
+                                            fDB
+                                            mDB
+                                            fDB_n
+                                            mDB_n
+
+    in feedForward rest rcf cpoolf (fDB', mDB', fDB_n', mDB_n')
+     
 
 dumpDatabases :: FilePath -> IO ()
 dumpDatabases path = do
@@ -239,6 +366,8 @@ dumpDatabases path = do
     U.infoLoggerM "Completed."
 
 startpoint :: FilePath -> IO ()
-startpoint path = do
+startpoint = undefined
+{--startpoint path = do
     conf <- getConfigDirectory
     driver conf path
+--}

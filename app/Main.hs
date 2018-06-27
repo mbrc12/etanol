@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, MultiWayIf #-}
+{-# LANGUAGE OverloadedStrings, MultiWayIf, TemplateHaskell, BangPatterns #-}
 
 module Main
     ( main
@@ -7,7 +7,8 @@ module Main
 import Etanol.Analysis
 import Etanol.Driver
 import Etanol.Types
-import Etanol.Crawler
+import qualified Etanol.Crawler as CB
+import qualified ByteCodeParser.BasicTypes as BT
 
 import Control.Monad
 import System.Directory (canonicalizePath)
@@ -15,38 +16,55 @@ import System.Environment
 
 import Options.Applicative
 import Data.Semigroup
+import Data.Maybe
+
+import Development.GitRev
 
 data Options 
-    = Reset 
-    | Analyse { analyse_path :: String } 
-    | Dump { dump_path :: String }
+    = Analyse 
+        { analyse_path :: FilePath
+        , sources_path :: [FilePath]
+        , output_path  :: FilePath
+        }
     | Benchmark { benchmark_path :: String }
+    | Version 
 
     deriving Show
 
+sourceReader :: ReadM [FilePath]
+sourceReader = maybeReader $ Just . words
+    
+
 performTasks :: Options -> IO ()
-performTasks Reset = resetConfigDirectory
 
-performTasks (Analyse path) = do
-    absPath <- canonicalizePath path
-    startpoint absPath
+performTasks Version = putStrLn $
+    "etanolx\nGit revision:\t" ++ $(gitHash) ++ "\n"++
+    "Last commit:\t"++ $(gitCommitDate)++"\n"
 
-performTasks (Dump path) = do
-    absPath <- canonicalizePath path
-    dumpDatabases absPath
+
+performTasks (Analyse path sources output) = do
+    path' <- canonicalizePath path
+    sources' <- mapM canonicalizePath sources
+    output' <- canonicalizePath output
+    driver2 path' sources' output'
 
 performTasks (Benchmark path) = do
+    putStrLn "Benchmarking.."
     absPath <- canonicalizePath path
-    files <- readRawClassFilesInDirectory absPath
-    print $! files
+    !rcs <- CB.classesOnDemand absPath
+    !cls <- CB.classesInPath absPath
+    let cl = map (BT.thisClass . fromJust . rcs) cls
+        --le = map (BT.majorVersion . fromJust . rcs) cls
+    print $! cl
+    --print $! le
 
 -- Parsers begin
 
-resetParser :: Parser Options
-resetParser = flag' Reset 
-    (   long "reset"
-    <>  short 'r'
-    <>  help "Reset the database."
+versionParser :: Parser Options
+versionParser = flag' Version
+    ( long "version"
+    <> short 'v'
+    <> help "Displays the version (GitHash and last Commit) and exits."
     )
 
 analyseParser :: Parser Options
@@ -57,15 +75,22 @@ analyseParser = Analyse <$> strOption
     <>  completer (bashCompleter "file")
     <>  metavar "FILENAME/DIRECTORY"
     )
-
-dumpParser :: Parser Options
-dumpParser = Dump <$> strOption 
-    (   long "dump"
-    <>  short 'd'
-    <>  help "Dump the databases into the provided directory."
-    <>  completer (bashCompleter "directory")
-    <>  metavar "DIRECTORY"
+    <*> Options.Applicative.option sourceReader
+    (
+        long "sources"
+    <>  short 's'
+    <>  help "Source files separated by space"
+    <>  completer (bashCompleter "file")
+    <>  metavar "FILENAME(s)"
     )
+    <*> strOption 
+    (   long "output"
+    <>  short 'o'
+    <>  help "Output location of the results."
+    <>  completer (bashCompleter "file")
+    <>  metavar "FILENAME"
+    )
+    
 
 benchmarkParser :: Parser Options
 benchmarkParser = Benchmark <$> strOption
@@ -79,7 +104,7 @@ benchmarkParser = Benchmark <$> strOption
 
 parser :: Parser Options
 parser = helper <*>
-        resetParser <|> analyseParser <|> dumpParser <|> benchmarkParser
+        analyseParser <|> benchmarkParser <|> versionParser
 
 executableParser :: IO Options
 executableParser = execParser $

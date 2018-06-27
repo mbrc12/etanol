@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns #-}
+
 {- 
         MonadFX : This library provides the FX monad (Fast eXit) which has
                   state capabilities along with fast exiting. It is known
@@ -50,7 +52,7 @@ exitWith r = FX $ \s -> (s, Left r)
 
 resultant :: FX s r r -> s -> (s, r)
 resultant m s =
-    let (t, z) = runFX m s
+    let (!t, !z) = runFX m s
      in if isLeft z
             then (t, unLeft z)
             else (t, unRight z)
@@ -59,9 +61,9 @@ resultant m s =
 exceptify :: FX s r r -> FX s r r
 exceptify m =
     FX $ \s ->
-        let (t, q) = runFX m s
+        let (!t, !q) = runFX m s
          in if isLeft q
-                then (t, Right $ unLeft q)
+                then (t, Right $! unLeft q)
                 else (t, q)
 
 whenExit :: Bool -> r -> FX s r ()
@@ -83,10 +85,10 @@ instance Monad (FX s r) where
     return z = FX $ \s -> (s, Right z)
     m >>= g =
         FX $ \s ->
-            let (t, z) = runFX m s
+            let (!t, !z) = runFX m s
              in if isLeft z
-                    then (t, Left $ unLeft z)
-                    else let p = unRight z
+                    then (t, Left $! unLeft z)
+                    else let !p = unRight z
                           in runFX (g p) t
 
 instance Functor (FX s r) where
