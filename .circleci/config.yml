@@ -21,10 +21,12 @@ jobs:
 #      - run: tar -xvf /tmp/stack.tar.gz -C /tmp/stack/
 #      - run: sudo chmod +x /tmp/stack/stack-1.7.1-linux-x86_64/stack
 #      - run: sudo mv /tmp/stack/stack-1.7.1-linux-x86_64/stack /usr/bin/stack
+      
+      - run: mkdir TestSuite
+      - run: wget https://github.com/mbrc12/test-suites/raw/master/TestSuite/etanol/guava-23.0.jar -O TestSuite/guava.jar
+      - run: wget https://github.com/mbrc12/test-suites/raw/master/TestSuite/etanol/rt_java7.jar -O TestSuite/rt7.jar
+      - run: wget https://github.com/mbrc12/test-suites/raw/master/TestSuite/etanol/rt_java8.jar -O TestSuite/rt8.jar
 
-      - run:
-          name: Check stack version
-          command: stack --version
       - run: git submodule sync
       - run: git submodule update --init --recursive
       - run:
