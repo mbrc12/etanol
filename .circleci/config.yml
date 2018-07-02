@@ -5,9 +5,12 @@ dependencies:
 jobs:
   build:
     docker:
-      - image: ubuntu-14.04-XXL-1325-0ccc9ce
+      - image: docker:17.06.1-ce-git
     steps:
       - checkout 
+      - run:
+          name: Install curl
+          command: apk update && apk add curl curl-dev bash
       - run:
           name: Download and install stack
           command: curl -sSL https://get.haskellstack.org/ | sh
