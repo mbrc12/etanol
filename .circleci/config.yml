@@ -14,6 +14,7 @@ jobs:
       - run: wget https://github.com/mbrc12/test-suites/raw/master/TestSuite/etanol/guava-23.0.jar -O TestSuite/guava.jar
       - run: wget https://github.com/mbrc12/test-suites/raw/master/TestSuite/etanol/rt_java7.jar -O TestSuite/rt7.jar
       - run: wget https://github.com/mbrc12/test-suites/raw/master/TestSuite/etanol/rt_java8.jar -O TestSuite/rt8.jar
+      - run: wget https://github.com/mbrc12/test-suites/raw/master/TestSuite/etanol/.etanolglobalconfig -O ~/.etanolglobalconfig
       
       - run: mkdir TestSuite/guava
       - run: mkdir TestSuite/rt7
@@ -31,7 +32,7 @@ jobs:
 
       - run:
           name: Test - Benchmark 1
-          command: stack exec -- etanolx -a TestSuite/rt7/ -s "" -o Output/rt7.db
+          command: stack exec -- etanolx -a TestSuite/rt7/java/lang/ -s "" -o Output/rt7javalang.db
       - run:
           name: Test - Benchmark 2
           command: stack exec -- etanolx -a TestSuite/rt8/ -s "" -o Output/rt8.db
