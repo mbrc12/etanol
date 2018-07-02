@@ -1,13 +1,13 @@
 version: 2
+dependencies:
+    pre: 
+        - sudo apt-get update; sudo apt-get install curl
 jobs:
   build:
     docker:
       - image: debian:stretch
     steps:
-      - checkout
-      - run:
-          name: Install curl
-          command: sudo apt-get update; sudo apt-get install curl
+      - checkout 
       - run:
           name: Download and install stack
           command: curl -sSL https://get.haskellstack.org/ | sh
