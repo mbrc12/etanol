@@ -117,8 +117,7 @@ readRawClassFilesFromPath path = do
 
     let classNames = findClassNames archive
         result = map (\cname ->
-                     U.debugLogger 
-                        ("Parsing file : " ++ cname) $
+                     --U.debugLogger ("Parsing file : " ++ cname) $
                         readRawByteString 
                             (getEntry cname archive))
                  classNames

@@ -103,7 +103,7 @@ loadedInMemoryDirectory path = do
                 mapM (\path -> do
                                 fileContents <- readCompleteFile path
                                 return $! (convertSlashToDot $! thisClass $!
-                                                U.debugLogger ("Parsing " ++ path)  $!
+                                               -- U.debugLogger ("Parsing " ++ path)  $!
                                                 readRawByteString fileContents, 
                                                 --fileContents))
                                             readRawByteString fileContents)) 
