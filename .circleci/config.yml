@@ -6,6 +6,9 @@ jobs:
     steps:
       - checkout
       - run:
+          name: Install curl
+          command: sudo apt-get update; sudo apt-get install curl
+      - run:
           name: Download and install stack
           command: curl -sSL https://get.haskellstack.org/ | sh
       - run:
