@@ -1,7 +1,5 @@
 version: 2
-dependencies:
-    pre: 
-        - sudo apt-get update; sudo apt-get install curl
+
 jobs:
   build:
     docker:
@@ -33,5 +31,5 @@ jobs:
           name: Build
           command: stack build
       - run:
-          name: Test
-          command: stack test
+          name: Test - Benchmark 1
+          command: stack exec -- etanolx --version
