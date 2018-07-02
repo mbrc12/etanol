@@ -32,4 +32,11 @@ jobs:
           command: stack build
       - run:
           name: Test - Benchmark 1
-          command: stack exec -- etanolx --version
+          command: stack exec -- etanolx -b TestSuite/rt7.jar
+      - run
+          name: Test - Benchmark 2
+          command: stack exec -- etanolx -b TestSuite/rt8.jar
+      - run
+          name: Test - Benchmark 3
+          command: stack exec -- etanolx -b TestSuite/guava.jar
+
