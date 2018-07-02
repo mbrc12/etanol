@@ -11,6 +11,10 @@ jobs:
       - run:
           name: Install curl
           command: apk update && apk add curl curl-dev bash
+      - run:
+          name: CA Certificates
+          command: apk add ca-certificates && update-ca-certificates
+          
 
       - run: wget https://github.com/commercialhaskell/stack/releases/download/v1.7.1/stack-1.7.1-linux-x86_64.tar.gz -O /tmp/stack.tar.gz
       - run: mkdir /tmp/stack
