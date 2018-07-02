@@ -6,37 +6,39 @@ jobs:
       - image: fpco/stack-build:latest   
     steps:
       - checkout 
-#- run:
-#          name: Install curl
-#          command: apk update && apk add curl curl-dev bash
-#      - run:
-#          name: CA Certificates
-#          command: apk add ca-certificates && update-ca-certificates
-          
-
-#      - run: wget https://github.com/commercialhaskell/stack/releases/download/v1.7.1/stack-1.7.1-linux-x86_64.tar.gz -O /tmp/stack.tar.gz
-#      - run: mkdir /tmp/stack
-#      - run: tar -xvf /tmp/stack.tar.gz -C /tmp/stack/
-#      - run: sudo chmod +x /tmp/stack/stack-1.7.1-linux-x86_64/stack
-#      - run: sudo mv /tmp/stack/stack-1.7.1-linux-x86_64/stack /usr/bin/stack
-      
+      - run: git submodule sync
+      - run: git submodule update --init --recursive
+     
       - run: mkdir TestSuite
+      
       - run: wget https://github.com/mbrc12/test-suites/raw/master/TestSuite/etanol/guava-23.0.jar -O TestSuite/guava.jar
       - run: wget https://github.com/mbrc12/test-suites/raw/master/TestSuite/etanol/rt_java7.jar -O TestSuite/rt7.jar
       - run: wget https://github.com/mbrc12/test-suites/raw/master/TestSuite/etanol/rt_java8.jar -O TestSuite/rt8.jar
+      
+      - run: mkdir TestSuite/guava
+      - run: mkdir TestSuite/rt7
+      - run: mkdir TestSuite/rt8
+      
+      - run: unzip TestSuite/guava.jar -d TestSuite/guava/
+      - run: unzip TestSuite/rt7.jar -d TestSuite/rt7/
+      - run: unzip TestSuite/rt8.jar -d TestSuite/rt8/
 
-      - run: git submodule sync
-      - run: git submodule update --init --recursive
+      - run: mkdir Output
+
       - run:
           name: Build
           command: stack build
+
       - run:
           name: Test - Benchmark 1
-          command: stack exec -- etanolx -b TestSuite/rt7.jar
+          command: stack exec -- etanolx -a TestSuite/rt7/ -s "" -o Output/rt7.db
       - run:
           name: Test - Benchmark 2
-          command: stack exec -- etanolx -b TestSuite/rt8.jar
+          command: stack exec -- etanolx -a TestSuite/rt8/ -s "" -o Output/rt8.db
       - run:
           name: Test - Benchmark 3
-          command: stack exec -- etanolx -b TestSuite/guava.jar
-
+          command: stack exec -- etanolx -a TestSuite/guava/ -s "Output/rt8.db" -o Output/guava.db
+      
+      - store_artifacts:
+          path: Output/
+     

@@ -1,5 +1,9 @@
 # Etanol - a purity and nullability analysis tool for Java
 
+[![CircleCI](https://circleci.com/gh/mbrc12/etanol.svg?style=svg)](https://circleci.com/gh/mbrc12/etanol)
+
+** NOTE: ** This README hasn't been updated to reflect latest changes. It will be done in a few days.
+
 The Wiki will contain more details once the implementation is somewhat stabilized.
 
 For installation, after you clone the repository, do

@@ -4,3 +4,4 @@ etanol.cabal
 *~
 *.swp
 *.swo
+Tests/
