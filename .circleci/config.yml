@@ -33,10 +33,10 @@ jobs:
       - run:
           name: Test - Benchmark 1
           command: stack exec -- etanolx -b TestSuite/rt7.jar
-      - run
+      - run:
           name: Test - Benchmark 2
           command: stack exec -- etanolx -b TestSuite/rt8.jar
-      - run
+      - run:
           name: Test - Benchmark 3
           command: stack exec -- etanolx -b TestSuite/guava.jar
 
