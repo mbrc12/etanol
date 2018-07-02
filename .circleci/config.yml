@@ -11,9 +11,12 @@ jobs:
       - run:
           name: Install curl
           command: apk update && apk add curl curl-dev bash
-      - run:
-          name: Download and install stack
-          command: curl -sSL https://get.haskellstack.org/ | sh
+      - run: wget https://github.com/commercialhaskell/stack/releases/download/v1.7.1/stack-1.7.1-linux-x86_64.tar.gz -D /tmp/stack.tar.gz
+      - run: mkdir /tmp/stack
+      - run: tar -xvf /tmp/stack.tar.gz -C /tmp/stack/
+      - run: sudo chmod +x /tmp/stack/stack-1.7.1-linux-x86_64/stack
+      - run: sudo mv /tmp/stack/stack-1.7.1-linux-x86_64/stack /usr/bin/stack
+
       - run:
           name: Check stack version
           command: stack --version
