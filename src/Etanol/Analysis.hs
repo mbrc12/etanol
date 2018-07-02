@@ -1189,14 +1189,24 @@ analyseAtom j (pos, ca@(BL.uncons -> Just (op, rest))) loc stk
                 -- This line was removed because the above conditions do not guarantee that putStatic does not occur
                 -- the only thing that is guaranteed is that putStatic occurs on a FinalStatic field, and that can occur
                 -- only in <clinit>. We believe that does not cause much of a problem.
-    when (op == getFieldOp) $ do
+    when (op == getFieldOp) $ exitWith Impure
+        {--
         let ftype = getSTypeOfFieldWord8 rest cpool
             topelem = unsafeHead "getFieldOp" stk
             rstk = tail stk
         if | ftype == OFBasic -> setStackPos j (SBasic : rstk)
            | ftype == OFBasicLong -> setStackPos j (SBasicLong : rstk)
            | otherwise -> setStackPos j (topelem : rstk)
-                                                                                        --               SReference Int then this is also int SReference
+        --}
+    -- NOTE (2nd July 2018) : The above code has been commented out in response
+    -- to the proposal by my GSoC mentors that getField accesses are not pure in
+    -- general, because other methods may modify them. As such only final static
+    -- field accesses should be allowed. But final static accesses are always
+    -- getStatic accesses, so getField is always Impure
+
+    -- SReference Int then this is also SReference Int
+    -- If SReferenceFresh then this is also fresh reference
+
     when (op == putFieldOp) $ do
         let ftype = getSTypeOfFieldWord8 rest cpool
             !obj = head (tail stk) -- item 2    
@@ -1208,6 +1218,7 @@ analyseAtom j (pos, ca@(BL.uncons -> Just (op, rest))) loc stk
                 if isJust ty
                     then addMut j $ fromJust ty -- add to parameter mutations
                     else return () -- else modifies fresh param
+
                 {- Analysis for the whole suite of pops, dups and also swap -}
     when (op == popOp) $ setStackPos j $ tail stk
     when (op == pop2Op) $ setStackPos j $ tail $ tail stk
