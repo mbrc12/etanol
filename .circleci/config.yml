@@ -30,6 +30,6 @@ jobs:
       - run:
           name: Build
           command: stack build
-
-  test:
-      - run: stack test   
+      - run:
+          name: Test
+          command: stack test
