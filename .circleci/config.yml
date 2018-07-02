@@ -25,3 +25,6 @@ jobs:
       - run:
           name: Check stack version
           command: stack --version
+      - run:
+          name: Build
+          command: stack build
