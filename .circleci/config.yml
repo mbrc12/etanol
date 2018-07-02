@@ -25,6 +25,8 @@ jobs:
       - run:
           name: Check stack version
           command: stack --version
+      - run: git submodule sync
+      - run: git submodule update --init --recursive
       - run:
           name: Build
           command: stack build
