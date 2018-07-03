@@ -11,7 +11,7 @@ module Etanol.Driver
     , driver2
     ) where
 
-import Data.List (foldl', sort)
+import Data.List
 import Control.Monad
 import qualified Data.ByteString as B
 import Data.Either
@@ -287,6 +287,8 @@ driver2 path sources output = do
         curmDB_n       = subMap mDB_n' currentMethods
 
     U.debugLoggerM $ "Analysing and saving results to " ++ output
+       
+    putStrLn $ showSummary curfDB curmDB curfDB_n curmDB_n
 
     saveAllDB output $! AllDB 
         { afieldDB = curfDB
@@ -325,7 +327,39 @@ feedForward (!comp : rest) rcf cpoolf (fDB, mDB, fDB_n, mDB_n) =
                                             mDB_n
 
     in feedForward rest rcf cpoolf (fDB', mDB', fDB_n', mDB_n')
+    
+
+summarizer :: (Eq b, Ord b, Show b) => [(a, b)] -> String
+summarizer xs = 
+     concat $ 
+        intersperse "\n" $ 
+            map (\(c, g) -> "  " ++ show g ++ ": " ++ show c) $
+                map (\g -> (length g, (snd $ head g))) $
+                    groupBy (\x y -> snd x == snd y) $
+                        sortBy (\(_, u) (_, v) -> compare u v) $
+                            xs
+                        
+showSummary :: FieldDB 
+            -> MethodDB 
+            -> FieldNullabilityDB 
+            -> MethodNullabilityDB 
+            -> String
+showSummary fDB mDB fDB_n mDB_n = 
+    let lfdb = M.toList fDB
+        lmdb = M.toList mDB
+        lfdb_n = M.toList fDB_n
+        lmdb_n = M.toList mDB_n
+        fsum   = summarizer lfdb
+        msum   = summarizer lmdb
+        fnsum  = summarizer lfdb_n
+        mnsum  = summarizer lmdb_n
+    in  "Analysis results:\n\n" ++
+        "Fields:\n" ++ fsum ++ "\n" ++
+        "Methods:\n" ++ msum ++ "\n" ++
+        "Field Nullability:\n" ++ fnsum ++ "\n" ++
+        "Method Nullability:\n" ++ mnsum ++ "\n"
      
+
 
 dumpDatabases :: FilePath -> IO ()
 dumpDatabases path = do
