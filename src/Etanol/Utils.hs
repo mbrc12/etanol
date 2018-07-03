@@ -55,7 +55,6 @@ getFastOperators :: (Ord a, Eq a, Show a) =>
 getFastOperators xs = let forwardMap = M.fromList $ zip [1..] xs  -- these start                                  
                           reverseMap = M.fromList $ zip xs [1..]  -- from 1.
                       in  (length xs, (forwardMap !?), (\el ->
-                                                            U.debugLogger (show el) $
                                                              (reverseMap !? el)))
 
 
@@ -66,7 +65,7 @@ genDependencyPools constPoolOfClass classNames =
     let (n, atIndex, indexOf) = getFastOperators classNames
         edges      = concatMap (\name -> 
                                     let pos = fromJust $ indexOf name
-                                    in U.debugLogger ("Class: " ++ show name) $
+                                    in 
                                        map (\x -> (pos, fromJust $ indexOf x, ())) $
                                         filter (isJust . indexOf) $ 
                                             let cpool = constPoolOfClass name

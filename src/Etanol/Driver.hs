@@ -279,7 +279,7 @@ driver2 path sources output = do
                             cls
 
         subMap m k     = M.fromList $!
-                            map (\e -> e `seq` (U.debugLogger "Indexing subMap" (e, m ! e))) k
+                            map (\e -> e `seq` (e, m ! e)) k
 
         curfDB         = subMap fDB'   currentFields
         curmDB         = subMap mDB'   currentMethods
@@ -289,6 +289,12 @@ driver2 path sources output = do
     U.debugLoggerM $ "Analysing and saving results to " ++ output
        
     putStrLn $ showSummary curfDB curmDB curfDB_n curmDB_n
+    
+    when (U.getVerbosity == U.DebugLevel) $ do
+       print curfDB
+       print curmDB
+       print curfDB_n
+       print curmDB_n
 
     saveAllDB output $! AllDB 
         { afieldDB = curfDB
