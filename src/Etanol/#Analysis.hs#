@@ -18,20 +18,7 @@ module Etanol.Analysis
     , Stacks(..)
     , MutLocs(..)
     , LocalHeap(..)
-    , LocalHeaps(..)
-    , Status(..)
-    , AnyName(..)
-    , NamePrefix(..)
-    , initialStrongImpureList
-    , tHRESHOLD
-    , isInitialStrongImpure
-    , descriptorIndices2
-    , toIndex
-    ) where
-
-import Control.Applicative
-import Control.Monad
--- update what is being imported
+    , LocalHeaps(..)-- update what is being imported
 import Data.Binary (Word16, Word32, Word8)
 import Data.Graph.Inductive.Graph
 import Data.Graph.Inductive.PatriciaTree
