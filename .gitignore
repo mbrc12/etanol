@@ -5,3 +5,4 @@ etanol.cabal
 *.swp
 *.swo
 Tests/
+.vscode/
