@@ -71,9 +71,9 @@ analyseParser :: Parser Options
 analyseParser = Analyse <$> strOption 
     (   long "analyse"
     <>  short 'a'
-    <>  help "Analyse the given .jar/directory. Also look at $HOME/.etanolglobalconfig for configuration about backends."
+    <>  help "Analyse the given .class file/.jar/directory. Also look at $HOME/.etanolglobalconfig for configuration about backends."
     <>  completer (bashCompleter "file")
-    <>  metavar "FILENAME/DIRECTORY"
+    <>  metavar "CLASSFILE/JARFILE/DIRECTORY"
     )
     <*> Options.Applicative.option sourceReader
     (

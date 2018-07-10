@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, BangPatterns #-}
+{-# LANGUAGE OverloadedStrings, BangPatterns, MultiWayIf #-}
 
 module Etanol.JarUtils
     ( readRawClassFilesFromPath
@@ -82,6 +82,28 @@ createJar path = do
 
     return archive    
 
+createClassJar :: FilePath -> IO Z.Archive
+createClassJar path = do
+    
+    fileExistsRoutine path
+        
+    U.infoLoggerM $ "Reading from " ++ path
+    
+    let extraOpts = if U.getVerbosity == U.DebugLevel
+                    then [Z.OptVerbose]
+                    else []
+    
+    -- create Archive containing all the files in the directory
+    -- recursively
+    archive <- Z.addFilesToArchive 
+                    (Z.OptRecursive : extraOpts)
+                    Z.emptyArchive
+                    [path]
+        
+    performMajorGC
+    
+    return archive    
+
 -- NOTE: Note that extractJar and createJar are not opposites
 -- Rather they unify the underlying system. extractJar produces
 -- an Z.Archive from a provided JAR file, and createJar creates
@@ -91,9 +113,9 @@ createJar path = do
 -- a Z.Archive whatever the input format.
 giveMeAnArchive :: FilePath -> IO Z.Archive
 giveMeAnArchive path = 
-    if isJar path
-    then extractJar path
-    else createJar  path
+    if  | isJar path    -> extractJar path
+        | isClass path  -> createClassJar path
+        | otherwise     -> createJar  path
 
 
 findClassNames :: Z.Archive -> [FilePath]

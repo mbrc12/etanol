@@ -43,6 +43,7 @@ isClass :: FilePath -> Bool
 isClass = isSuffixOf ".class"
 
 unzipCommand = "unzip"
+cpCommand = "cp"
 
 isClassAndFile :: FilePath -> IO Bool
 isClassAndFile path = do
@@ -73,6 +74,12 @@ convertSlashToDot = T.map (\c -> if c == '/' then '.' else c)
 isJar :: FilePath -> Bool
 isJar = isSuffixOf ".jar"
 
+isClassFile :: FilePath -> Bool
+isClassFile = isSuffixOf ".class"
+
+etanolTemp :: FilePath
+etanolTemp = "etanol_tmp/"
+
 adjustForJar :: FilePath -> IO FilePath
 adjustForJar path = do
     tmp <- getTemporaryDirectory
@@ -81,12 +88,12 @@ adjustForJar path = do
         maybeUnzip <- findExecutable unzipCommand
         when (isNothing maybeUnzip) $
             die "\"unzip\" tool could not be located. Please install it and put in on the PATH."
-        let unzipPath = tmp </> "etanol_tmp/"
+        let unzipPath = tmp </> etanolTemp
         exs <- doesDirectoryExist unzipPath
         when (exs) $ do
-                U.infoLoggerM "Cleaning the previously extracted files.."
-                removeDirectoryRecursive unzipPath
-                U.infoLoggerM "Completed."
+            U.infoLoggerM "Cleaning the previously extracted files.."
+            removeDirectoryRecursive unzipPath
+            U.infoLoggerM "Completed."
         let unzipShell = unzipCommand ++ " " ++ path ++ " -d " ++ unzipPath
         U.infoLoggerM "\nExtracting jar files..\n"
         callCommand unzipShell
@@ -94,10 +101,32 @@ adjustForJar path = do
         return $! unzipPath
     else return $! path
 
+adjustForClass :: FilePath -> IO FilePath
+adjustForClass path = do
+    tmp <- getTemporaryDirectory
+    if isClassFile path
+    then do
+        maybeCp <- findExecutable cpCommand
+        when (isNothing maybeCp) $
+            die "\"cp\" tool could not be located. Please install it and put in on the PATH."
+        let cpPath = tmp </> etanolTemp
+        exs <- doesDirectoryExist cpPath
+        when (exs) $ do
+            U.infoLoggerM "Cleaning the previously saved files.."
+            removeDirectoryRecursive cpPath
+            U.infoLoggerM "Completed."
+            createDirectory cpPath -- this will create the deleted folder again
+
+        let cpShell = cpCommand ++ " " ++ path ++ " " ++ cpPath
+        U.infoLoggerM "Copying the class file.."
+        callCommand cpShell
+        U.infoLoggerM "\nDone.\n"
+        return $! cpPath
+    else return $! path
 
 loadedInMemoryDirectory :: FilePath -> IO (M.Map ClassName RawClassFile)
 loadedInMemoryDirectory path = do
-    path'   <- adjustForJar path
+    path'   <- adjustForJar path >>= adjustForClass
     classes <- getClassFileNames path'
     pure M.fromList <*>
                 mapM (\path -> do
