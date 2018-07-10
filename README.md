@@ -53,6 +53,9 @@ Method Nullability:
   UnanalyzableNullMethod: 1803
 ```
 
+To know more about what each annotation means, please refer to the [Wiki](https://github.com/mbrc12/etanol/wiki). More information about each specific annotation will be added soon.
+
+
 ## Usage
 
 Analysis in `etanolx` requires 3 arguments. First is the name of the directory containing the class files (which will be searched
