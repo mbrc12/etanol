@@ -79,6 +79,7 @@ analyseParser = Analyse <$> strOption
     (
         long "sources"
     <>  short 's'
+    <>  value []
     <>  help "Source files separated by space"
     <>  completer (bashCompleter "file")
     <>  metavar "FILENAME(s)"
