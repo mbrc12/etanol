@@ -11,10 +11,10 @@ jobs:
      
       - run: mkdir TestSuite
       
-      - run: wget https://github.com/mbrc12/test-suites/raw/master/TestSuite/etanol/guava-23.0.jar -O TestSuite/guava.jar
-      - run: wget https://github.com/mbrc12/test-suites/raw/master/TestSuite/etanol/rt_java7.jar -O TestSuite/rt7.jar
-      - run: wget https://github.com/mbrc12/test-suites/raw/master/TestSuite/etanol/rt_java8.jar -O TestSuite/rt8.jar
-      - run: wget https://github.com/mbrc12/test-suites/raw/master/TestSuite/etanol/.etanolglobalconfig -O ~/.etanolglobalconfig
+      - run: wget http://central.maven.org/maven2/com/google/guava/guava/23.0/guava-23.0.jar -O TestSuite/guava.jar
+      - run: wget https://cdnverify.eta-lang.org/eta-binaries/etanol/rt_java7.jar -O TestSuite/rt7.jar
+      - run: wget https://cdnverify.eta-lang.org/eta-binaries/etanol/rt_java8.jar -O TestSuite/rt8.jar
+     # - run: wget https://github.com/mbrc12/test-suites/raw/master/TestSuite/etanol/.etanolglobalconfig -O ~/.etanol/config
       
       - run: mkdir TestSuite/guava
       - run: mkdir TestSuite/rt7
