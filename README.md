@@ -104,8 +104,11 @@ the the output file name. It is used like
     * `InfoLevel`
     * `SeriousLevel`
     * `QuietLevel`
-    
-`DebugLevel` outputs a lot of data, and is suited only for debugging purposes (most of this output doesn't make sense at first sight, so its not very useful for the user).`InfoLevel` outputs only information messages.
+3. `AbortOnAbsence` : This controls the setting of whether the analysis should abort if an Unanalyzable method/field is encountered due to its absence in the current analysis scope. The two options are
+    * `Abort` : Abort on absence, this is the default setting.
+    * `DoNotAbort` : The opposite of the above. Continue analysis ignoring absence of class files.
+
+For `Verbosity` : `DebugLevel` outputs a lot of data, and is suited only for debugging purposes (most of this output doesn't make sense at first sight, so its not very useful for the user).`InfoLevel` outputs only information messages.
 `SeriousLevel` is for only serious errors/problems, and finally `QuietLevel` ensures that there is no verbosity (just the final summary).
 Currently, `SeriousLevel` itself suppresses all output, as no `SeriousLevel` error messages are present in the code. The default
 is `InfoLevel` which is probably what you want if you're just using the tool. But if
