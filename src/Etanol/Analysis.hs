@@ -7,6 +7,8 @@ module Etanol.Analysis
     , AnyID(..)
     , uniques
     , CPoolMap(..)
+    , CPoolProvider(..)
+    , DepsNotFound(..)
     , analyseAll
     , AnyData(..)
     , LoadedThings(..)
@@ -38,6 +40,7 @@ import Data.Graph.Inductive.PatriciaTree
 import Data.List
 import Data.Map.Strict ((!), (!?))
 import qualified Data.Map.Strict as M
+import qualified Data.Set as S
 import qualified Data.Text as T
 import Data.Maybe
 import qualified Data.Vector as V
@@ -50,10 +53,13 @@ import Etanol.ControlFlowGraph
 import Etanol.Decompile
 import Etanol.MonadFX
 import Etanol.Types
+import Etanol.Utils (weirdClass)
 
 import qualified Data.ByteString.Lazy as BL
 
 import EtanolTools.Unsafe
+
+type DepsNotFound = [AnyID]
 
 type NamePrefix = T.Text -- prefixes of strings, anynames
 
@@ -201,15 +207,6 @@ isFinalStaticField !cpool fieldDB !idx =
 uniques :: [AnyID] -> [AnyID]
 uniques = map (unsafeHead "uniques") . group . sort
 
-data AnyID
-    = EFieldID { fieldID :: !FieldID }
-    | EMethodID { methodID :: !MethodID }
-    deriving (Eq, Ord)
-
-instance Show AnyID where
-    show (EFieldID f) = "field " ++ T.unpack (fst f) ++ ":" ++ T.unpack (snd f)
-    show (EMethodID m) = "method " ++ T.unpack (fst m) ++ ":" ++ T.unpack (snd m)
-
 data AnyData
     = EFieldData { fieldData :: !NamedField }
     | EMethodData { methodData :: !NamedMethodCode }
@@ -241,7 +238,9 @@ depsMethod cpool vca
             | op `elem` [invokeSpecialOp, invokeStaticOp, invokeVirtualOp] ->
                 let !idx = toIndex rest
                     !mthd = getMethodName cpool $ fromIntegral idx
-                 in (EMethodID mthd) : (depsMethod cpool restcode)
+                 in (if not (isInterfaceMethod cpool (fromIntegral idx))
+                    then ((EMethodID mthd) : )
+                    else id) $ depsMethod cpool restcode    -- do not include interface methods
             | otherwise     -> depsMethod cpool restcode
 
             where (e, bs)  = V.head vca
@@ -286,22 +285,25 @@ getConstantPoolForThing !cpp !thing =
 -- | Note that by implementation, analyseAll must always return (empty map, _, _).
 analyseAll ::
        CPoolProvider
+    -> S.Set ClassName
     -> LoadedThings
     -> LoadedThingsStatus
     -> FieldDB
     -> MethodDB
     -> FieldNullabilityDB
     -> MethodNullabilityDB
-    -> (LoadedThingsStatus, FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB) -- new values
-analyseAll !cpp !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_mDB =
+    -> Either DepsNotFound (LoadedThingsStatus, FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB) -- new values
+analyseAll !cpp classes !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_mDB =
     if M.null loadedThingsStatus
-        then (loadedThingsStatus, fDB, mDB, n_fDB, n_mDB)
+        then Right (loadedThingsStatus, fDB, mDB, n_fDB, n_mDB)
         else let (!thing, _) = M.elemAt 0 loadedThingsStatus
                  cpool = getConstantPoolForThing cpp thing
-                 (!loadedThingsStatus', !fDB', !mDB', !n_fDB', !n_mDB') =
-                     analysisDriver
+                 
+                 result =     
+                    analysisDriver
                          cpp
                          cpool
+                         classes
                          loadedThings
                          loadedThingsStatus
                          fDB
@@ -309,10 +311,13 @@ analyseAll !cpp !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_mDB =
                          n_fDB
                          n_mDB
                          thing
-              in debugLogger
-                     ("LoadedThingsStatus: " ++
-                      (show $! M.size loadedThingsStatus)) $
-                 analyseAll cpp loadedThings loadedThingsStatus' fDB' mDB' n_fDB' n_mDB'
+              in case result of 
+                    Left dnf    -> Left dnf
+                    Right (!loadedThingsStatus', !fDB', !mDB', !n_fDB', !n_mDB') ->                 
+                            debugLogger
+                                ("LoadedThingsStatus: " ++
+                                    (show $! M.size loadedThingsStatus)) $
+                                analyseAll cpp classes loadedThings loadedThingsStatus' fDB' mDB' n_fDB' n_mDB'
 
 toRepr :: AnyID -> String
 toRepr (EFieldID f) = " Field " ++ T.unpack (fst f) ++ ":" ++ T.unpack (snd f)
@@ -322,6 +327,7 @@ toRepr (EMethodID m) = " Method " ++ T.unpack (fst m) ++ ":" ++ T.unpack (snd m)
 analysisDriver ::
        CPoolProvider
     -> V.Vector ConstantInfo
+    -> S.Set ClassName
     -> LoadedThings
     -> LoadedThingsStatus
     -> FieldDB
@@ -329,18 +335,19 @@ analysisDriver ::
     -> FieldNullabilityDB
     -> MethodNullabilityDB
     -> AnyID -- target
-    -> (LoadedThingsStatus, FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB) -- new values
-analysisDriver cpp !cpool !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_mDB !thing -- thing is guaranteed to be in loadedThings
+    -> Either DepsNotFound (LoadedThingsStatus, FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB) -- new values
+analysisDriver cpp !cpool classes !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_mDB !thing -- thing is guaranteed to be in loadedThings
  =
     let thingdata =
             debugLogger ("Here" ++ show (loadedThings !? thing)) $
             loadedThings ! thing
      in if isField thing
-            then ( M.delete thing loadedThingsStatus
-                 , analyseField cpool loadedThings fDB thing
-                 , mDB
-                 , analyseField_null cpool loadedThings n_fDB thing
-                 , n_mDB)
+            then Right $ 
+                    ( M.delete thing loadedThingsStatus
+                    , analyseField cpool loadedThings fDB thing
+                    , mDB
+                    , analyseField_null cpool loadedThings n_fDB thing
+                    , n_mDB)
                         -- delete object                get the changed field                   old method db works
                         --                              note that we do not pass the current
                         --                              statuses to field analysis as fields are always
@@ -352,14 +359,16 @@ analysisDriver cpp !cpool !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_
                      then let !mID = methodID thing
                               !mDB' = M.insert mID UnanalyzableMethod mDB
                               !n_mDB' = M.insert mID UnanalyzableNullMethod n_mDB
-                           in (M.delete thing loadedThingsStatus, fDB, mDB', n_fDB, n_mDB')
+                           in Right (M.delete thing loadedThingsStatus, fDB, mDB', n_fDB, n_mDB')
                      else let !mID = methodID thing
                               !loadedThingsStatus' =
                                   M.insert thing Analyzing loadedThingsStatus
-                              (!loadedThingsStatus'', !fDB', !mDB', !n_fDB', !n_mDB') =
-                                  analyseMethod
+                                  
+                              result = 
+                                    analyseMethod
                                       cpp
                                       cpool
+                                      classes
                                       loadedThings
                                       loadedThingsStatus'
                                       fDB
@@ -370,7 +379,10 @@ analysisDriver cpp !cpool !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_
                                                                         -- However you need to pass cmap here as it can recursively analyse
                                                                         -- other stuff
                                     --trace(toRepr thing ++ " => " ++ show (mDB' ! mID))
-                           in (M.delete thing loadedThingsStatus'', fDB', mDB', n_fDB', n_mDB')
+                           in case result of
+                                Left dnf        -> Left dnf
+                                Right (!loadedThingsStatus'', !fDB', !mDB', !n_fDB', !n_mDB') 
+                                                -> Right (M.delete thing loadedThingsStatus'', fDB', mDB', n_fDB', n_mDB')
 
 isBasic :: FieldDescriptor -> Bool
 isBasic "" = error "Empty field descriptor!"
@@ -410,20 +422,22 @@ analyseField_null !cpool !loadedThings !n_fDB !thing =
 feedAll ::
        CPoolProvider
     -> LoadedThings
+    -> S.Set ClassName
     -> LoadedThingsStatus
     -> FieldDB
     -> MethodDB
     -> FieldNullabilityDB
     -> MethodNullabilityDB
     -> [AnyID]
-    -> (LoadedThingsStatus, FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB)
-feedAll _ _ loadedThingsStatus fDB mDB n_fDB n_mDB [] = (loadedThingsStatus, fDB, mDB, n_fDB, n_mDB)
-feedAll cpp !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_mDB (aID:rest) =
-    let (!lth', !fdb', !mdb', !n_fdb', !n_mdb') =
+    -> Either DepsNotFound (LoadedThingsStatus, FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB)
+feedAll _ _ _ loadedThingsStatus fDB mDB n_fDB n_mDB [] = Right (loadedThingsStatus, fDB, mDB, n_fDB, n_mDB)
+feedAll cpp !loadedThings classes !loadedThingsStatus !fDB !mDB !n_fDB !n_mDB (aID:rest) =
+    let result =
             if M.member aID loadedThingsStatus
                 then analysisDriver
                          cpp
                          (getConstantPoolForThing cpp aID)
+                         classes 
                          loadedThings
                          loadedThingsStatus
                          fDB
@@ -432,14 +446,17 @@ feedAll cpp !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_mDB (aID:rest)
                          n_mDB
                          aID
                                                 -- this is why you need the cmap to analyseMethod, as it can recursively call this.
-                else (loadedThingsStatus, fDB, mDB, n_fDB, n_mDB)
-     in feedAll cpp loadedThings lth' fdb' mdb' n_fdb' n_mdb' rest
+                else Right $ (loadedThingsStatus, fDB, mDB, n_fDB, n_mDB)
+     in case result of 
+            Left dnf -> Left dnf
+            Right (!lth', !fdb', !mdb', !n_fdb', !n_mdb') -> feedAll cpp loadedThings classes lth' fdb' mdb' n_fdb' n_mdb' rest
 
 -- checks properties for method
 -- currently no recursive method is analyzed to be pure
 analyseMethod ::
        CPoolProvider
     -> V.Vector ConstantInfo
+    -> S.Set ClassName
     -> LoadedThings
     -> LoadedThingsStatus
     -> FieldDB
@@ -447,8 +464,8 @@ analyseMethod ::
     -> FieldNullabilityDB
     -> MethodNullabilityDB
     -> AnyID
-    -> (LoadedThingsStatus, FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB)
-analyseMethod cpp !cpool !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_mDB !thing =
+    -> Either DepsNotFound (LoadedThingsStatus, FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB)
+analyseMethod cpp !cpool classes !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_mDB !thing =
     let !mID = methodID thing
         !mName = fst mID
         !mDes = snd mID
@@ -463,7 +480,9 @@ analyseMethod cpp !cpool !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_m
         !fNAl =
             map EFieldID $! filter (\x -> M.notMember x fDB) $! map fieldID fDeps
         !nAl = mNAl ++ fNAl
-        !nA = filter (\x -> M.notMember x loadedThings) nAl
+        !nA'' = filter (\x -> M.notMember x loadedThings) nAl
+        nA' = filter (\x -> S.notMember (anyIDToClassName x) classes) nA''
+        nA = filter (not . weirdClass . anyIDToClassName) nA'
                         -- not previously analyzed and also not loaded, but required for analysis
      in debugLogger
             ("Constant pool : " ++
@@ -476,36 +495,46 @@ analyseMethod cpp !cpool !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_m
                         -- VarArg check, see GSoC Phase 2 goals
                         -- These identifiers enable immediate disqualification
                         -- or if Code is empty implying an abstract method
-            then (loadedThingsStatus, fDB, M.insert mID UnanalyzableMethod mDB,
+            then Right (loadedThingsStatus, fDB, M.insert mID UnanalyzableMethod mDB,
                     n_fDB, M.insert mID UnanalyzableNullMethod n_mDB)
             else if isInitialStrongImpure mName
-                     then ( loadedThingsStatus
+                     then Right ( loadedThingsStatus
                           , fDB
                           , M.insert mID StrongImpure mDB
                           , n_fDB
                           , M.insert mID NullableMethod n_mDB)
                      else if nonEmpty nA
-                              then ( loadedThingsStatus
-                                   , fDB
-                                   , M.insert mID UnanalyzableMethod mDB
-                                   , n_fDB
-                                   , M.insert mID UnanalyzableNullMethod n_mDB )
-                              else let (loadedThingsStatus', fDB', mDB', n_fDB', n_mDB') =
-                                           feedAll
+                              then --seriousLogger ("\n From analyseMethod: \n" ++ show thing ++ " ?? " ++ show nA) $ 
+                                    if getAbortOnAbsence == Abort
+                                    then Left nA
+                                    else Right  ( loadedThingsStatus
+                                                , fDB
+                                                , M.insert mID UnanalyzableMethod mDB
+                                                , n_fDB
+                                                , M.insert mID UnanalyzableNullMethod n_mDB 
+                                                )
+                                    
+                              else let result = 
+                                            feedAll
                                                cpp
                                                loadedThings
+                                               classes
                                                loadedThingsStatus
                                                fDB
                                                mDB
                                                n_fDB
                                                n_mDB
                                                nAl
+                                   in case result of
+                                        Left dnf    -> Left dnf
+                                        Right (loadedThingsStatus', fDB', mDB', n_fDB', n_mDB') ->
                                                                                 -- here you call feedAll with cmap
                                         -- after this all deps of this method is not in loadedThingsStatus, as they have all been analyzed
                                         -- recursively. So we can now safely analyse this method itself
                                         -- But it may happen that this method itself got into a loop and was analyzed already
-                                    in if M.member thing loadedThingsStatus'
-                                           then let !desidx =
+                                            if M.member thing loadedThingsStatus'
+                                            then 
+                                                let !desidx =
                                                         descriptorIndices2 $
                                                         mDes
                                                     !initialHeap =
@@ -563,6 +592,7 @@ analyseMethod cpp !cpool !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_m
                                                             [[]]
                                                             [theStart]
                                                             [[]]
+                                                            []
                                                     (finalState, verdict) =
                                                         resultant
                                                             getAnalysis
@@ -589,6 +619,8 @@ analyseMethod cpp !cpool !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_m
                                                     mDB'' = methodDB finalState
                                                     n_fDB'' = n_fieldDB finalState_null
                                                     n_mDB'' = n_methodDB finalState_null
+                                                    
+                                                    dnf = depsNotFound finalState
 
                                                     mut =
                                                         unq $
@@ -601,18 +633,23 @@ analyseMethod cpp !cpool !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_m
                                                             then Local
                                                             else verdict
 
-                                                 in ( loadedThingsStatus' -- can safely leave this like this without
+                                                 in if not (null dnf) 
+                                                    then Left dnf
+                                                    else Right $
+                                                        ( loadedThingsStatus' -- can safely leave this like this without
                                                                           -- deleting this method as the caller
                                                                           -- analysisDriver deletes it anyway.
-                                                    , fDB''
-                                                    , M.insert mID fin mDB''
-                                                    , n_fDB''
-                                                    , M.insert mID verdict_null n_mDB'' )
-                                           else ( loadedThingsStatus'
-                                                , fDB'
-                                                , mDB'
-                                                , n_fDB'
-                                                , n_mDB' )
+                                                        , fDB''
+                                                        , M.insert mID fin mDB''
+                                                        , n_fDB''
+                                                        , M.insert mID verdict_null n_mDB'' )
+                                            else Right $ 
+                                                    ( loadedThingsStatus'
+                                                    , fDB'
+                                                    , mDB'
+                                                    , n_fDB'
+                                                    , n_mDB' 
+                                                    )
 
 -- analyze method for type when all its dependencies are met
 ----------------------------------------------------------------------
@@ -744,6 +781,7 @@ data AnalysisBundle = AnalysisBundle
     , stacks :: Stacks
     , cpos :: [Int]
     , mutDB :: [MutLocs]
+    , depsNotFound :: DepsNotFound
     } deriving (Show)
 
 data NullAnalysisBundle = NullAnalysisBundle
@@ -975,7 +1013,7 @@ consumeCode = do
             concatMap
                 (\(l, s, c, m) ->
                      zip4 (repeat l) (repeat s) (suc g c) (repeat m)) $
-            zip4 loc stk p mut
+                zip4 loc stk p mut
     let np = map thirdof4 q
     setCPos np
     setLocalHeaps $ map firstof4 q
@@ -1169,10 +1207,10 @@ analyseAtom j (pos, ca@(BL.uncons -> Just (op, rest))) loc stk
         ((op == getStatic || op == putStatic) &&
          getSTypeOfFieldWord8 rest cpool == OFReference)
         Impure
-    whenExit
+    when
         ((op == getStatic || op == putStatic) &&
-         (isNothing $ isFinalStaticFieldWord8 rest cpool fDB))
-        UnanalyzableMethod
+         (isNothing $ isFinalStaticFieldWord8 rest cpool fDB)) $ do
+            exitWith UnanalyzableMethod
     whenExit
         ((op == getStatic || op == putStatic) &&
          (not $ isFinalStaticFieldWord8MaybeStripped rest cpool fDB))
@@ -1292,7 +1330,8 @@ analyseAtom j (pos, ca@(BL.uncons -> Just (op, rest))) loc stk
             par = filter (isJust . isParamRef) (obj : args) -- parameters of this function sent in as parameter to that function
             mty = mDB !? mID
         if isNothing mty
-            then exitWith UnanalyzableMethod
+            then do
+                exitWith UnanalyzableMethod
             else do
                 let mt = fromJust mty
                 if | mt == Impure -> exitWith Impure
@@ -1328,7 +1367,8 @@ analyseAtom j (pos, ca@(BL.uncons -> Just (op, rest))) loc stk
             par = filter (isJust . isParamRef) args -- parameters of this function sent in as parameter to that function
             mty = mDB !? mID
         if isNothing mty
-            then exitWith UnanalyzableMethod
+            then do
+                exitWith UnanalyzableMethod
             else do
                 let mt = fromJust mty
                 if | mt == Impure -> exitWith Impure

@@ -7,6 +7,8 @@ and method data. Also includes helper functions for Etanol.Analysis -}
 module Etanol.Types
     ( Descriptor(..)
     , getClassName
+    , AnyID(..)
+    , anyIDToClassName
     , FieldType(..)
     , MethodType(..)
     , FieldNullabilityType(..)
@@ -136,6 +138,19 @@ type ClassName = T.Text
 type FieldID = (FieldName, FieldDescriptor)
 
 type MethodID = (MethodName, MethodDescriptor)
+
+data AnyID
+    = EFieldID { fieldID :: !FieldID }
+    | EMethodID { methodID :: !MethodID }
+    deriving (Eq, Ord)
+
+instance Show AnyID where
+    show (EFieldID f) = "field " ++ T.unpack (fst f) ++ ":" ++ T.unpack (snd f)
+    show (EMethodID m) = "method " ++ T.unpack (fst m) ++ ":" ++ T.unpack (snd m)
+
+anyIDToClassName :: AnyID -> ClassName
+anyIDToClassName (EFieldID (fieldName, _)) = getClassName fieldName
+anyIDToClassName (EMethodID (methodName, _)) = getClassName methodName
 
 data FieldType
     = Normal

@@ -3,6 +3,7 @@
 module Etanol.Decompile
     ( getFieldName
     , getMethodName
+    , isInterfaceMethod
     , DNodeData(..)
     , DEdgeData(..)
     , DCFG(..)
@@ -104,6 +105,11 @@ getFieldName cp pos =
         nm = string $! info $! cp !@ (nameIndex nt)
         des = string $! info $! cp !@ (descriptorIndex nt)
      in (javaNamify $! adjoinClassName cn nm, des)
+
+isInterfaceMethod :: V.Vector ConstantInfo -> Int -> Bool
+isInterfaceMethod cp pos = 
+    let mthd = cp ! pos
+    in  constType mthd == CInterfaceMethodRef
 
 getMethodName :: V.Vector ConstantInfo -> Int -> MethodID
 getMethodName cp pos =

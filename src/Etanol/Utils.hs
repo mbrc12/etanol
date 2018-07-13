@@ -4,6 +4,7 @@ module Etanol.Utils
     ( classDeps
     , resolver
     , genDependencyPools
+    , weirdClass
     ) where
 
 import           ByteCodeParser.BasicTypes
@@ -41,7 +42,12 @@ classDeps cpool = filter (not . weirdClass) $
                                     filter (\elem ->
                                             constType
                                              (cpool ! elem) == CMethodRef)
-                                        [0..n])
+                                        [0..n]) ++ 
+                               (map (toClassName . fst . getMethodName cpool) $
+                                    filter (\elem ->
+                                            constType
+                                             (cpool ! elem) == CInterfaceMethodRef)
+                                        [0..n])  
                 where n =  V.length cpool - 1
         
 

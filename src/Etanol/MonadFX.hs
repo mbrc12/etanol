@@ -96,4 +96,4 @@ instance Functor (FX s r) where
 
 instance Applicative (FX s r) where
     pure = return
-    fs <*> xs = fs >>= \f -> xs >>= return . f
+    (<*>) = ap

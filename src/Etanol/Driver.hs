@@ -16,6 +16,7 @@ import Control.Monad
 import qualified Data.ByteString as B
 import Data.Either
 import qualified Data.Map as M
+import qualified Data.Set as S
 import Data.Maybe
 import qualified Data.Yaml as Y
 import qualified GHC.Generics as G
@@ -44,8 +45,10 @@ import Etanol.Utils
 import qualified Data.Map as M
 import Data.Map ((!))
 import qualified Data.Vector as V
+import qualified Data.Text   as T
 
 import qualified EtanolTools.Unsafe as U
+
 
 
 classesInPath = if U.getBackend == U.DirectoryBackend
@@ -254,7 +257,9 @@ driver2 path sources output = do
     
     cls <- classesInPath path
     depf <- classDependencyPools path
-    let scc = depf cls 
+    let scc = depf cls -- TODO: Decide whether truly the scc should be built or not.
+
+    --mapM_ (\xs -> mapM_ (\e -> print $ T.append "   " e) xs >> print " ------- ") scc 
 
     -- the equation here is: concatMap id scc == cls
 
@@ -269,9 +274,15 @@ driver2 path sources output = do
     U.assertCheck (all isJust $ map rcf cls) 
         "all isJust $ map rcf cls /= True"
 
-    let (fDB', mDB', fDB_n', mDB_n') = feedForward scc rcf cpoolf
+    let result                   = feedForward scc rcf cpoolf
                                         (fDB, mDB, fDB_n, mDB_n)
     
+    when (isLeft result) $ do
+        showNotFounds (fromLeft (error "False just became true.") result) 
+        die "Error stuff not found."
+
+    let ~(Right (fDB', mDB', fDB_n', mDB_n')) = result 
+
     let f              = fromJust . rcf
         currentFields  = concatMap ((map toFieldID) . getFields . f)
                             cls
@@ -291,10 +302,11 @@ driver2 path sources output = do
     putStrLn $ showSummary curfDB curmDB curfDB_n curmDB_n
     
     when (U.getVerbosity == U.DebugLevel) $ do
-       print curfDB
-       print curmDB
-       print curfDB_n
-       print curmDB_n
+       --print curfDB
+       --print curmDB
+       --print curfDB_n
+       --print curmDB_n
+       putStrLn "Done."
 
     saveAllDB output $! AllDB 
         { afieldDB = curfDB
@@ -308,8 +320,8 @@ feedForward :: [[ClassName]]
             -> (ClassName -> Maybe RawClassFile)
             -> (ClassName -> Maybe (V.Vector ConstantInfo))
             -> (FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB)
-            -> (FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB)
-feedForward [] _ _ dbs = dbs
+            -> Either DepsNotFound (FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB)
+feedForward [] _ _ dbs = Right dbs
 feedForward (!comp : rest) rcf cpoolf (fDB, mDB, fDB_n, mDB_n) =
     let f = fromJust . rcf
         !mthds = concatMap (getMethods . f) comp
@@ -323,8 +335,10 @@ feedForward (!comp : rest) rcf cpoolf (fDB, mDB, fDB_n, mDB_n) =
         !loadedStatus = M.fromList $!
                 map (\i -> (EFieldID i, NotAnalyzed)) fids ++
                 map (\i -> (EMethodID i, NotAnalyzed)) mids
-        (_, !fDB', !mDB', !fDB_n', !mDB_n') = analyseAll 
+        
+        result                      = analyseAll 
                                             cpoolf
+                                            (S.fromList comp)
                                             loadedThings
                                             loadedStatus
                                             fDB
@@ -332,7 +346,16 @@ feedForward (!comp : rest) rcf cpoolf (fDB, mDB, fDB_n, mDB_n) =
                                             fDB_n
                                             mDB_n
 
-    in feedForward rest rcf cpoolf (fDB', mDB', fDB_n', mDB_n')
+    in {-- U.seriousLogger 
+        ("Left components: " ++ 
+            show (length rest) ++ 
+            " :: " ++ 
+            show comp ) $ --("java.lang.Object" `elem` comp)) $
+       --}
+       case result of
+        Left dnf        -> Left dnf
+        Right (_, !fDB', !mDB', !fDB_n', !mDB_n') ->
+            feedForward rest rcf cpoolf (fDB', mDB', fDB_n', mDB_n')
     
 
 summarizer :: (Eq b, Ord b, Show b) => [(a, b)] -> String
@@ -364,8 +387,16 @@ showSummary fDB mDB fDB_n mDB_n =
         "Methods:\n" ++ msum ++ "\n" ++
         "Field Nullability:\n" ++ fnsum ++ "\n" ++
         "Method Nullability:\n" ++ mnsum ++ "\n"
-     
 
+uniqueClasses :: [T.Text] -> [T.Text]
+uniqueClasses = map head . group . sort
+
+showNotFounds :: DepsNotFound -> IO ()
+showNotFounds deps = do
+    let classesNotFound = uniqueClasses $ map anyIDToClassName deps
+    mapM_ (\c -> 
+        putStrLn $ "Not found: " ++ T.unpack c)
+        classesNotFound
 
 dumpDatabases :: FilePath -> IO ()
 dumpDatabases path = do
