@@ -1,0 +1,12 @@
+####### Verbosity Options. Uncomment any one #######
+# verbosity : DebugLevel
+verbosity : InfoLevel
+# verbosity : SeriousLevel
+# verbosity : QuietLevel
+
+####### Backend Options. Uncomment any one #######
+backend : DirectoryBackend
+# backend : JARBackend
+####### Abort On Absence. Uncomment any one #######
+# abortOnAbsence : Abort
+abortOnAbsence : DoNotAbort
