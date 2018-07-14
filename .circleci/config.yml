@@ -10,6 +10,7 @@ jobs:
       - run: git submodule update --init --recursive
      
       - run: mkdir TestSuite
+      - run: mkdir ~/.etanol
       
       - run: wget http://central.maven.org/maven2/com/google/guava/guava/23.0/guava-23.0.jar -O TestSuite/guava.jar
       - run: wget https://cdnverify.eta-lang.org/eta-binaries/etanol/rt_java7.jar -O TestSuite/rt7.jar
