@@ -4,6 +4,7 @@ module Etanol.Crawler
     ( readRawClassFilesFromPath
     , classesOnDemand
     , classesInPath
+    , classesOnDemandBS
     ) where
 
 -- TODO: Once this becomes stable document what all is being imported into scope
@@ -120,3 +121,24 @@ classesInPath :: FilePath -> IO [ClassName]
 classesInPath path = do
     mp <- loadedInMemoryDirectory path 
     return $! M.keys mp
+
+loadedInMemoryDirectoryBS :: FilePath -> IO (M.Map ClassName BL.ByteString)
+loadedInMemoryDirectoryBS path = do
+    path'   <- adjustForJar path
+    classes <- getClassFileNames path'
+    pure M.fromList <*>
+                mapM (\path -> do
+                                fileContents <- readCompleteFile path
+                                return $! (convertSlashToDot $! thisClass $!
+                                                -- U.debugLogger ("Parsing " ++ path)  $!
+                                                readRawByteString fileContents, 
+                                                --fileContents))
+                                            fileContents)) 
+                        classes
+
+classesOnDemandBS :: FilePath -> IO (ClassName -> Maybe BL.ByteString)
+classesOnDemandBS path = do
+    mapOfFiles <- loadedInMemoryDirectoryBS path
+    return (mapOfFiles !?)
+    --print $ M.keys mapOfFiles
+    --return $! ((fmap readRawByteString) . (mapOfFiles !?))

@@ -64,7 +64,7 @@ getFastOperators xs = let forwardMap = M.fromList $ zip [1..] xs  -- these start
                                                              (reverseMap !? el)))
 
 
-genDependencyPools :: (ClassName -> Maybe (V.Vector ConstantInfo))
+genDependencyPools :: (ClassName -> Maybe (V.Vector ConstantInfo)) -- or CPoolProvider
                     -> [ClassName]
                     -> [[ClassName]]
 genDependencyPools constPoolOfClass classNames =
