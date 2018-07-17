@@ -288,15 +288,18 @@ analyseAll ::
     -> S.Set ClassName
     -> LoadedThings
     -> LoadedThingsStatus
+    -> [AnyID]
     -> FieldDB
     -> MethodDB
     -> FieldNullabilityDB
     -> MethodNullabilityDB
     -> Either DepsNotFound (LoadedThingsStatus, FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB) -- new values
-analyseAll !cpp classes !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_mDB =
-    if M.null loadedThingsStatus
+analyseAll !cpp classes !loadedThings !loadedThingsStatus !focus !fDB !mDB !n_fDB !n_mDB =
+    --if M.null loadedThingsStatus
+      if null focus  
         then Right (loadedThingsStatus, fDB, mDB, n_fDB, n_mDB)
-        else let (!thing, _) = M.elemAt 0 loadedThingsStatus
+        else --let (!thing, _) = M.elemAt 0 loadedThingsStatus
+             let (thing : rest) = focus
                  cpool = getConstantPoolForThing cpp thing
                  
                  result =     
@@ -317,7 +320,7 @@ analyseAll !cpp classes !loadedThings !loadedThingsStatus !fDB !mDB !n_fDB !n_mD
                             debugLogger
                                 ("LoadedThingsStatus: " ++
                                     (show $! M.size loadedThingsStatus)) $
-                                analyseAll cpp classes loadedThings loadedThingsStatus' fDB' mDB' n_fDB' n_mDB'
+                                analyseAll cpp classes loadedThings loadedThingsStatus' rest fDB' mDB' n_fDB' n_mDB'
 
 toRepr :: AnyID -> String
 toRepr (EFieldID f) = " Field " ++ T.unpack (fst f) ++ ":" ++ T.unpack (snd f)

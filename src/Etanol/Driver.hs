@@ -341,6 +341,7 @@ feedForward (!comp : rest) rcf cpoolf (fDB, mDB, fDB_n, mDB_n) =
                                             (S.fromList comp)
                                             loadedThings
                                             loadedStatus
+                                            (M.keys loadedStatus)
                                             fDB
                                             mDB
                                             fDB_n

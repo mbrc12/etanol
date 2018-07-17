@@ -48,10 +48,12 @@ import Data.STRef
 
 type ClassProvider = ClassName -> Maybe BL.ByteString
 type RawClassFileProvider = ClassName -> Maybe RawClassFile
+type CodeProvider = AnyID -> Maybe (V.Vector CodeAtom)
 
 data AnalysisInputType 
     = AnalysisInputType 
-    { classes :: [ClassName] 
+    { classes :: [ClassName]
+    , targets :: [AnyID] 
     , classProvider :: ClassProvider
     , sourceFieldDB :: FieldDB
     , sourceMethodDB :: MethodDB
@@ -74,6 +76,8 @@ rawClassFileProvider cfp = fmap readRawByteString . cfp
 
 constPoolProvider :: ClassProvider -> CPoolProvider
 constPoolProvider cp = rawClassFileProvider cp >=> Just . constantPool
+
+
 
 explore :: CPoolProvider -> [ClassName] -> [ClassName] --dependencies
 explore cpp cns = runST $ do
@@ -151,6 +155,7 @@ analysis AnalysisInputType{..} =
                                             (S.fromList comp)
                                             loadedThings
                                             loadedStatus
+                                            targets
                                             sourceFieldDB
                                             sourceMethodDB
                                             sourceFieldNullabilityDB
