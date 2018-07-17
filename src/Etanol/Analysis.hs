@@ -300,20 +300,20 @@ analyseAll !cpp classes !loadedThings !loadedThingsStatus !focus !fDB !mDB !n_fD
         then Right (loadedThingsStatus, fDB, mDB, n_fDB, n_mDB)
         else --let (!thing, _) = M.elemAt 0 loadedThingsStatus
              let (thing : rest) = focus
-                 cpool = getConstantPoolForThing cpp thing
-                 
-                 result =     
-                    analysisDriver
-                         cpp
-                         cpool
-                         classes
-                         loadedThings
-                         loadedThingsStatus
-                         fDB
-                         mDB
-                         n_fDB
-                         n_mDB
-                         thing
+                 cpool = getConstantPoolForThing cpp thing 
+                 result = if M.member thing loadedThingsStatus    -- if already analysed then skip
+                          then  analysisDriver
+                                    cpp
+                                    cpool
+                                    classes
+                                    loadedThings
+                                    loadedThingsStatus
+                                    fDB
+                                    mDB
+                                    n_fDB
+                                    n_mDB
+                                    thing
+                          else Right (loadedThingsStatus, fDB, mDB, n_fDB, n_mDB) -- no change if already analysed
               in case result of 
                     Left dnf    -> Left dnf
                     Right (!loadedThingsStatus', !fDB', !mDB', !n_fDB', !n_mDB') ->                 
@@ -357,7 +357,7 @@ analysisDriver cpp !cpool classes !loadedThings !loadedThingsStatus !fDB !mDB !n
                         --                              analyzable in this setting
                         -- NOTE : analyseField can be called with just the cpool as it doesn't need anything else for
                         -- recursive analysis.
-            else debugLogger ("Analyzing " ++ show thing) $
+            else debugLogger ("Analyzing " ++ show thing ++ (show $ loadedThingsStatus !? thing) ) $
                  if (loadedThingsStatus ! thing) == Analyzing -- found loop
                      then let !mID = methodID thing
                               !mDB' = M.insert mID UnanalyzableMethod mDB
@@ -395,7 +395,7 @@ isBasic s = (T.head s) `elem` ['B', 'C', 'D', 'F', 'I', 'J', 'S', 'Z']
 analyseField :: V.Vector ConstantInfo -> LoadedThings -> FieldDB -> AnyID -> FieldDB
 analyseField cpool !loadedThings !fDB !thing =
     let !fID = fieldID thing
-        ((_, !fDesc), !fAccessFlags) = fieldData (loadedThings ! thing)
+        ((_, !fDesc), !fAccessFlags) = fieldData $ debugLogger "In analyseField" $ (loadedThings ! thing)
         verdict =
             if (AFFinal `elem` fAccessFlags) && (AFStatic `elem` fAccessFlags)
                 then FinalStatic
@@ -407,7 +407,7 @@ analyseField cpool !loadedThings !fDB !thing =
 analyseField_null :: V.Vector ConstantInfo -> LoadedThings -> FieldNullabilityDB -> AnyID -> FieldNullabilityDB
 analyseField_null !cpool !loadedThings !n_fDB !thing =
     let fID = fieldID thing
-        ((_, !fDesc), !fAccessFlags) = fieldData (loadedThings ! thing)
+        ((_, !fDesc), !fAccessFlags) = fieldData $ debugLogger "In analyseField_null" (loadedThings ! thing)
         verdict =
             if (AFFinal `elem` fAccessFlags) && (AFStatic `elem` fAccessFlags)
                 then NonNullableField       -- first approximation,
@@ -472,7 +472,7 @@ analyseMethod cpp !cpool classes !loadedThings !loadedThingsStatus !fDB !mDB !n_
     let !mID = methodID thing
         !mName = fst mID
         !mDes = snd mID
-        !mData = methodData (loadedThings ! thing)
+        !mData = methodData $ debugLogger "In analyseMethod" (loadedThings ! thing)
         (_, !mCode, !mCFG, !af) = mData
         !deps = dependencies cpool mCode
         !mDeps = filter isMethod deps
@@ -970,10 +970,10 @@ setLocalHeapPos_null pos lheap = do
     }
 
 getLocalHeapElem :: LocalHeap -> Int -> StackObject
-getLocalHeapElem loc pos = loc ! pos -- error if does not exist
+getLocalHeapElem loc pos = debugLogger "Error in localheap!" $ loc ! pos -- error if does not exist
 
 getLocalHeapElem_null :: NLocalHeap -> Int -> NStackObject
-getLocalHeapElem_null loc pos = loc ! pos
+getLocalHeapElem_null loc pos = debugLogger "Error in localheap-null!" $ loc ! pos
 
 localHeapOperate :: LocalHeap -> Int -> StackObject -> LocalHeap
 localHeapOperate loc pos obj = M.insert pos obj loc
