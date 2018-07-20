@@ -10,12 +10,6 @@ module Etanol.Crawler
 -- TODO: Once this becomes stable document what all is being imported into scope
 -- by each import
 
-import ByteCodeParser.BasicTypes
-import ByteCodeParser.Reader
-import Control.Applicative ((<*>), pure)
-import Control.Monad (filterM, mapM, when)
-import Data.List (isSuffixOf)
-import Data.Maybe
 import System.Directory 
     ( doesDirectoryExist
     , doesFileExist
@@ -25,20 +19,23 @@ import System.Directory
     , createDirectory
     , removeDirectoryRecursive
     )
+
+import ByteCodeParser.BasicTypes
+import ByteCodeParser.Reader
+import Control.Applicative ((<*>), pure)
+import Control.Monad (filterM, mapM, when)
+import Data.List (isSuffixOf)
+import Data.Map ((!?))
+import Data.Maybe
+import System.Exit (die)
 import System.FilePath.Posix ((</>))
 import System.Process (callCommand)
-import System.Exit (die)
-
-import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString as B
-import qualified Data.Text as T
-
+import qualified Data.ByteString.Lazy as BL
 import qualified Data.Map as M
-import Data.Map ((!?))
-
-import qualified EtanolTools.Unsafe as U
-
 import qualified Data.Text as T
+import qualified Data.Text as T
+import qualified EtanolTools.Unsafe as U
 
 isClass :: FilePath -> Bool
 isClass = isSuffixOf ".class"
@@ -63,7 +60,7 @@ getClassFileNames directory = do
     return $! files ++ recursive_files
 
 readRawClassFilesFromPath :: FilePath -> IO [RawClassFile]
-readRawClassFilesFromPath directory = do
+readRawClassFilesFromPath directory = 
     (fmap . fmap) T.pack (getClassFileNames directory) >>= mapM readRawClassFile
 
 readCompleteFile :: FilePath -> IO BL.ByteString

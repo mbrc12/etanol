@@ -98,7 +98,7 @@ explore cpp cns = runST $ do
 
         exploreVisit cpp seen vis = do
             isNull <- S.null <$> readSTRef seen
-            when (not isNull) $ do
+            unless (isNull) $ do
                 seenS <- readSTRef seen
                 visS <- readSTRef vis
 

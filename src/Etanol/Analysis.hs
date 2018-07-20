@@ -1,6 +1,6 @@
 {-# LANGUAGE DuplicateRecordFields, OverloadedStrings, MultiWayIf,
   BangPatterns, ViewPatterns #-}
-
+    
 module Etanol.Analysis
     ( isFinalStaticField
     , dependencies
