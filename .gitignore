@@ -4,5 +4,5 @@ etanol.cabal
 *~
 *.swp
 *.swo
-Tests/
+*.bytecode
 .vscode/

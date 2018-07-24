@@ -30,6 +30,10 @@ jobs:
       - run:
           name: Build
           command: stack build
+      
+      - run:
+          name: Test 0, Inbuilt specific test suite
+          command: stack test
 
       - run:
           name: Test 1, rt 7's java.lang

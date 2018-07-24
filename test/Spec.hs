@@ -3,7 +3,7 @@
 import Etanol.API
 import Etanol.Crawler
 
-import System.Directory (listDirectory)
+import System.Directory (listDirectory, canonicalizePath)
 import System.FilePath.Posix ((</>))
 import Control.Monad
 
@@ -16,12 +16,20 @@ import qualified Data.Text as T
 -- This is where all the tests go----------------------
 
 tests :: [TestUnit]
-tests = []
-
-
-
-
-
+tests = [ TestUnit { className = "T1"
+                   , units = [ UField 
+                                { field = ("T1.x", "I")
+                                , fpurity = FinalStatic
+                                , fnullability = NonNullableField
+                                }
+                            , UMethod 
+                                { method = ("T1.f", "(I)I")
+                                , mpurity = Pure
+                                , mnullability = NonNullableMethod
+                                }
+                            ]
+                   }
+        ]
 
 -------------------------------------------------------
 data Unit
@@ -67,7 +75,14 @@ check AnalysisOutputType{..} unit =
      
 test :: TestUnit -> IO ()
 test TestUnit{..} = do 
-    prov <- classesOnDemandBS testDir
+    absPath <- canonicalizePath testDir
+    
+    --print absPath
+
+    prov <- classesOnDemandBS absPath
+
+    --print $ prov className
+
     let classes = [className]
         targ = map (\case 
                     UField fld fp fn -> EFieldID fld 
