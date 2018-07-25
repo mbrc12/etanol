@@ -74,6 +74,8 @@ import Etanol.ControlFlowGraph
 import Data.Serialize
 import Data.Serialize.Text
 
+import qualified Data.Set as S
+
 import qualified Data.Yaml as Y
 import GHC.Generics
 
@@ -218,6 +220,7 @@ data AllDB = AllDB
         , amethodDB      :: MethodDB
         , afieldDB_null  :: FieldNullabilityDB
         , amethodDB_null :: MethodNullabilityDB
+        , aclasses       :: S.Set ClassName
         } deriving (Show, Generic)
 
 instance Serialize AllDB

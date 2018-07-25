@@ -2,6 +2,7 @@
 
 import Etanol.API
 import Etanol.Crawler
+import Etanol.Types
 
 import System.Directory (listDirectory, canonicalizePath)
 import System.FilePath.Posix ((</>))
@@ -11,12 +12,14 @@ import Data.Maybe
 import Data.Either
 import qualified Data.Map as M
 import qualified Data.Text as T
-
+import Data.List
+import qualified Data.Set as S
 
 -- This is where all the tests go----------------------
 
 tests :: [TestUnit]
 tests = [ TestUnit { className = "T1"
+                   , sources = ["java.db"] 
                    , units = [ UField 
                                 { field = ("T1.x", "I")
                                 , fpurity = FinalStatic
@@ -28,6 +31,20 @@ tests = [ TestUnit { className = "T1"
                                 , mnullability = NonNullableMethod
                                 }
                             ]
+                   }
+        , TestUnit { className = "T2"
+                   , sources = ["java.db"]
+                   , units = [ UMethod
+                                { method = ("T2.fst", "(LPair;)I")
+                                , mpurity = Impure
+                                , mnullability = NonNullableMethod
+                                }
+                             , UMethod 
+                                { method = ("T2.pr", "()I")
+                                , mpurity = Impure
+                                , mnullability = NonNullableMethod
+                                }
+                             ]
                    }
         ]
 
@@ -49,6 +66,7 @@ data TestUnit
     = TestUnit 
     { className :: T.Text 
     , units   :: [Unit]
+    , sources :: [FilePath]
     } deriving (Show)
 
 
@@ -83,6 +101,15 @@ test TestUnit{..} = do
 
     --print $ prov className
 
+    allDBs <- mapM (\f -> loadAllDB $ absPath </> f) sources 
+
+    let merge = foldl' M.union M.empty
+        fDB   = merge $ map afieldDB allDBs
+        mDB   = merge $ map amethodDB allDBs
+        fDB_n = merge $ map afieldDB_null allDBs
+        mDB_n = merge $ map amethodDB_null allDBs
+        cls   = S.unions $ map aclasses allDBs
+    
     let classes = [className]
         targ = map (\case 
                     UField fld fp fn -> EFieldID fld 
@@ -93,15 +120,21 @@ test TestUnit{..} = do
                 { classes = classes
                 , targets = targ
                 , classProvider = prov
-                , sourceFieldDB = M.empty
-                , sourceMethodDB = M.empty
-                , sourceFieldNullabilityDB = M.empty
-                , sourceMethodNullabilityDB = M.empty
+                , sourceClasses = cls
+                , sourceFieldDB = fDB
+                , sourceMethodDB = mDB
+                , sourceFieldNullabilityDB = fDB_n
+                , sourceMethodNullabilityDB = mDB_n
                 }
 
         result = analysis ainput
+        
+        emsg = if isLeft result 
+                then "Classes not found : " ++ intercalate "\n    " (map T.unpack $ fromLeft undefined result)
+                else ""
 
-        output = fromRight (error "Classes not found!") result
+
+        output = fromRight (error emsg) result
 
         checks = concatMap (check output) units
 

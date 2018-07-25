@@ -31,21 +31,25 @@ jobs:
           name: Build
           command: stack build
       
-      - run:
-          name: Test 0, Inbuilt specific test suite
-          command: stack test
-
+      
       - run:
           name: Test 1, rt 7's java.lang
           command: stack exec -- etanolx -a TestSuite/rt7/java/lang/ -s "" -o Output/rt7javalang.db
       - run:
           name: Test 2, rt 8's java
           command: stack exec -- etanolx -a TestSuite/rt8/java/ -s "" -o Output/rt8java.db
+
+      - run: cp Output/rt8java.db test/Tests/java.db  
+
       - run:
-          name: Test 3, rt 8's javax
+          name: Test 3, Inbuilt specific test suite
+          command: stack test
+ 
+      - run:
+          name: Test 4, rt 8's javax
           command: stack exec -- etanolx -a TestSuite/rt8/javax/ -s "Output/rt8java.db" -o Output/rt8javax.db
       - run:
-          name: Test 4, Guava
+          name: Test 5, Guava
           command: stack exec -- etanolx -a TestSuite/guava/ -s "Output/rt8java.db  Output/rt8javax.db" -o Output/guava.db
       
       - store_artifacts:

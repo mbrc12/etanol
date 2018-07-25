@@ -55,6 +55,7 @@ data AnalysisInputType
     { classes :: [ClassName]
     , targets :: [AnyID] 
     , classProvider :: ClassProvider
+    , sourceClasses :: S.Set ClassName
     , sourceFieldDB :: FieldDB
     , sourceMethodDB :: MethodDB
     , sourceFieldNullabilityDB :: FieldNullabilityDB
@@ -79,8 +80,8 @@ constPoolProvider cp = rawClassFileProvider cp >=> Just . constantPool
 
 
 
-explore :: CPoolProvider -> [ClassName] -> [ClassName] --dependencies
-explore cpp cns = runST $ do
+explore :: CPoolProvider -> S.Set ClassName -> [ClassName] -> [ClassName] --dependencies
+explore cpp blacklist cns = runST $ do
     seen <- newSTRef (S.fromList cns)
     vis  <- newSTRef S.empty
 
@@ -98,14 +99,14 @@ explore cpp cns = runST $ do
 
         exploreVisit cpp seen vis = do
             isNull <- S.null <$> readSTRef seen
-            unless (isNull) $ do
+            unless isNull $ do
                 seenS <- readSTRef seen
                 visS <- readSTRef vis
 
                 let top = S.elemAt 0 seenS
                     cpool = cpp top
                     deps = S.fromList $ classDeps' (cpp top)
-                    deps' = deps `difference` visS
+                    deps' = (deps `difference` visS) `difference` blacklist 
                     seenS' = (S.deleteAt 0 seenS) `union` deps'
                     visS' = S.insert top visS
                 
@@ -126,11 +127,12 @@ wrap cp x =
 
 analysis :: AnalysisInputType -> Either [ClassName] AnalysisOutputType
 analysis AnalysisInputType{..} = 
-    let poolProv = constPoolProvider classProvider
-        comp0 = explore poolProv classes
+    let  
+        poolProv = constPoolProvider classProvider
+        comp0 = explore poolProv sourceClasses classes          -- blacklist source classes
         notf = depsNotFoundByExplore poolProv comp0
         comp = comp0 \\ notf
-
+        
         readAll = M.fromList $ 
                     map (\cn ->
                             (cn, readRawByteString $ fromJust $ classProvider cn))

@@ -313,6 +313,7 @@ driver2 path sources output = do
         , amethodDB = curmDB
         , afieldDB_null = curfDB_n
         , amethodDB_null = curmDB_n
+        , aclasses = S.fromList cls
         }
 
 
@@ -322,7 +323,7 @@ feedForward :: [[ClassName]]
             -> (FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB)
             -> Either DepsNotFound (FieldDB, MethodDB, FieldNullabilityDB, MethodNullabilityDB)
 feedForward [] _ _ dbs = Right dbs
-feedForward (!comp : rest) rcf cpoolf (fDB, mDB, fDB_n, mDB_n) =
+feedForward (comp : rest) rcf cpoolf (fDB, mDB, fDB_n, mDB_n) =
     let f = fromJust . rcf
         !mthds = concatMap (getMethods . f) comp
         !flds  = concatMap (getFields . f)  comp
