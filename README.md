@@ -1,6 +1,119 @@
-# Etanol - a purity and nullability analysis tool for Java
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+tputs only information messages.
+l - a purity and nullability analysis tool for Java
 
 [![CircleCI](https://circleci.com/gh/mbrc12/etanol.svg?style=svg)](https://circleci.com/gh/mbrc12/etanol)
+
+The first part of this document describes the command line tool. The second part describes the API.
 
 ## Installation
 
@@ -114,5 +227,175 @@ Currently, `SeriousLevel` itself suppresses all output, as no `SeriousLevel` err
 is `InfoLevel` which is probably what you want if you're just using the tool. But if
 you want to develop the tool further, or want complete silence (other than the summmary) you can just change the `.etanol/config` file.
 
+### The Etanol API
+
+Etanol can also work in an API mode, for integration into applications. The main entry point of the API is a function called `analysis` located in `Etanol.API`. This function takes an `AnalysisInputType` record and returns a `AnalysisOutputType` record (Not exactly; it returns a `Either [ClassName] AnalysisOutputType`, it is described below). 
+
+The `AnalysisInputType` is 
+```
+data AnalysisInputType 
+    = AnalysisInputType 
+    { classes :: [ClassName]
+    , targets :: [AnyID] 
+    , classProvider :: ClassProvider
+    , sourceClasses :: S.Set ClassName
+    , sourceFieldDB :: FieldDB
+    , sourceMethodDB :: MethodDB
+    , sourceFieldNullabilityDB :: FieldNullabilityDB
+    , sourceMethodNullabilityDB :: MethodNullabilityDB
+    } 
+```
+
+The fields are detailed below:
+* `classes` : The classes you want to analyse.
+* `targets` : A list of `AnyID`s (which is basically a tagged union of `MethodID` and `FieldID`s), to target for analysis.
+* `classProvider` : A function from `ClassName` to `Maybe ByteString`, a function that provide `ByteString`s of classes on demand (or indicate that it couldn't be found through `Nothing`. 
+* `sourceClasses`: The classes that are present in the dependencies you want to pass in. The following four fields hold information about their analysis properties. Most of the time, this comes from the output of a previous analysis.
+* `sourceFieldDB, sourceMethodDB, sourceFieldNullabilityDB, sourceMethodNullabilityDB` : Information about the purity/nullability of methods/fields present in the dependency classes (`sourceClasses`).
+
+The type synonyms used above and below are as follows:
+
+```
+type ClassName = Text 	-- from text
+
+data AnyID
+    = EFieldID { fieldID :: !FieldID }
+    | EMethodID { methodID :: !MethodID }
+
+type FieldID = (FieldName, FieldDescriptor)
+
+type MethodID = (MethodName, MethodDescriptor)
+
+type FieldDescriptor = Text -- of the form like I or LPair;
+
+type MethodDescriptor = Text -- of the form like (I)I or (LPair;)Z
+
+type FieldName = Text -- like a.b.c.FIELD
+
+type MethodName = Text -- like a.b.c.d.methodName
+
+type FieldDB = Map FieldID FieldType 		-- standard map from haskell Data.Map
+
+type MethodDB = Map MethodID MethodType
+
+type FieldNullabilityDB = Map FieldID FieldNullabilityType
+
+type MethodNullabilityDB = Map MethodID MethodNullabilityType
+
+data FieldType
+    = Normal
+    | Basic
+    | FinalStatic
+    | UnanalyzableField
+
+data FieldNullabilityType
+    = NullableField
+    | NonNullableField
+    | UndecidedField
+    | UnanalyzableNullField
+
+data MethodType
+    = Pure
+    | Impure
+    | Local
+    | StrongImpure
+    | UnanalyzableMethod
+
+data MethodNullabilityType
+    = NullableMethod
+    | NonNullableMethod
+    | UndecidedMethod
+    | UnanalyzableNullMethod
+    
+```
+
+As mentioned above, the output for `analysis` is `Either [ClassName] AnalysisOutputType`. The `Either` is due to the fact that you can choose to abort the analysis when classes are missing, by modifying `.etanol/config` as mentioned above.
+
+If `DoNotAbort` is the option selected, you can be sure (upto bugs) that `Left ..` will never be the result. However, if `Abort` is selected, the API will try to collect as many missing classes as possible and return a `Left [ClassName]`. Otherwise `Right AnalysisOutputType` is returned.
+
+`AnalysisOutputType` has the following definition:
+
+```
+data AnalysisOutputType
+    = AnalysisOutputType
+    { fieldPurity :: FieldID -> Maybe FieldType
+    , methodPurity :: MethodID -> Maybe MethodType
+    , fieldNullability :: FieldID -> Maybe FieldNullabilityType
+    , methodNullability :: MethodID -> Maybe MethodNullabilityType
+    , fieldsAnalyzed :: [FieldID]
+    , methodsAnalyzed :: [MethodID]
+    } 
+```
+The fields are detailed below:
+
+* `fieldPurity` : A function that returns the `FieldType` (wrapped in Maybe in case the field is not found).
+* `methodPurity, fieldNullability, methodNullability` : Analogous to the above.
+* `fieldsAnalyzed, methodAnalyzed` : Lists of fields and methods analysed by analysis, useful for debugging.
+
+It is not immediately clear how to use this API given that the output and input types are so different, so here is an explanation of how you might use it for a usecase.
+
+The testsuite for etanol uses the API in the following way:
+
+First we define a `TestUnit` as follows:
+
+```
+data TestUnit 
+    = TestUnit 
+    { className :: T.Text 
+    , units   :: [Unit]
+    , sources :: [FilePath]
+    } deriving (Show)
+```
+
+and `Unit` as:
+
+```
+data Unit
+    = UField
+    { field :: FieldID
+    , fpurity :: FieldType
+    , fnullability :: FieldNullabilityType
+    } 
+    | UMethod
+    { method :: MethodID
+    , mpurity :: MethodType
+    , mnullability :: MethodNullabilityType
+    } deriving (Show)
+```
+
+For example, right off the etanol tests, 
+```
+TestUnit { className = "T1"
+         , sources = ["java.db"] 
+         , units = [ UField 
+                     { field = ("T1.x", "I")
+                     , fpurity = FinalStatic
+                     , fnullability = NonNullableField
+                     }
+                   , UMethod 
+                     { method = ("T1.f", "(I)I")
+                     , mpurity = Pure
+                     , mnullability = NonNullableMethod
+                     }
+                   ]
+         }
+```
+
+Now the verifier for the test suite works as follows:
+
+* First it loads everything in `sources`, and merges all the maps and sets inside it (See the definition of `AllDB` is `Etanol.Types`.
+* Next it creates a `classProvider` using the `Etanol.Crawler` library's `classesOnDemandBS` function, that can detect and convert all classes inside a directory, exposing a function that is a `ClassProvider`.
+* Then it calls analysis with the targets listed in `units`, and just matches the output against the asserted purity/nullability results. 
+
+You can read `~/test/Spec.hs` for the full code.
+
 
 Thanks to [Nikita Tchayka](https://github.com/NickSeagull) for the cool name and to [Lorde](https://en.wikipedia.org/wiki/Lorde) for [_Melodrama_](https://en.wikipedia.org/wiki/Melodrama_(Lorde_album))!
+
+
+
+
+
+
+
+
