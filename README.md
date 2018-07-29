@@ -1,4 +1,4 @@
-Etanol - a purity and nullability analysis tool for Java
+# Etanol - a purity and nullability analysis tool for Java
 
 [![CircleCI](https://circleci.com/gh/mbrc12/etanol.svg?style=svg)](https://circleci.com/gh/mbrc12/etanol)
 
