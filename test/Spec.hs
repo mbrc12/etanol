@@ -46,6 +46,45 @@ tests = [ TestUnit { className = "T1"
                                 }
                              ]
                    }
+        
+        , TestUnit { className = "T3"
+                   , sources = ["java.db"]
+                   , units = [ UField
+                                { field = ("T3.x", "I")
+                                , fpurity = Basic
+                                , fnullability = NonNullableField
+                                }
+                             , UMethod 
+                                { method = ("T3.f", "(I)V")
+                                , mpurity = Local
+                                , mnullability = NonNullableMethod
+                                }
+                             , UMethod 
+                                { method = ("T3.g", "()I")
+                                , mpurity = Impure
+                                , mnullability = NonNullableMethod
+                                }
+                             , UMethod 
+                                { method = ("T3.h", "()LT3;")
+                                , mpurity = Pure
+                                , mnullability = NullableMethod
+                                }
+                             , UMethod 
+                                { method = ("T3.l", "()LT3;")
+                                , mpurity = Pure
+                                , mnullability = NullableMethod
+                                }
+                            ]
+                   }
+        , TestUnit { className = "T4"
+                    , sources = ["java.db"] 
+                    , units = [ UMethod 
+                                { method = ("T4.f", "()I")
+                                , mpurity = Impure
+                                , mnullability = NonNullableMethod
+                                } 
+                             ]
+                    }
         ]
 
 -------------------------------------------------------
