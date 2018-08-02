@@ -85,6 +85,20 @@ tests = [ TestUnit { className = "T1"
                                 } 
                              ]
                     }
+        , TestUnit { className = "T5"
+                    , sources = ["java.db"] 
+                    , units = [ UField 
+                                 { field = ("T5.x", "I")
+                                 , fpurity = Basic
+                                 , fnullability = NonNullableField
+                                 }
+                             , UMethod 
+                                 { method = ("T5.f", "()LT5;")
+                                 , mpurity = Pure
+                                 , mnullability = NonNullableMethod
+                                 }
+                             ]
+                    }
         ]
 
 -------------------------------------------------------
