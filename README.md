@@ -89,6 +89,8 @@ as follows
 
 > `... -s "<source 1> <source 2> <source 3> ..." ..`.
 
+**N.B.** : Note that if you don't want to pass any sources, you don't need to add any `-s ..` option.
+
 ### Output 
 
 As mentioned in the previous section, each analysis has an output file containing the results. This option allows you to specify 
