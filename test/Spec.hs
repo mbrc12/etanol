@@ -106,8 +106,19 @@ tests = [ TestUnit { className = "T1"
                                 , fpurity = Normal
                                 , fnullability = NullableField
                                  }
-                             , UMethod 
+                              , UMethod 
                                 { method = ("T6.f", "(I)I")
+                                , mpurity = Pure
+                                , mnullability = NonNullableMethod
+                                }
+                              , UMethod 
+                                { method = ("T6.g", "(D)D")
+                                , mpurity = UnanalyzableMethod  -- very unfortunately sin is not pure as it 
+                                                                -- uses native stuff
+                                , mnullability = NonNullableMethod
+                                }
+                              , UMethod
+                                { method = ("T6.g2", "(D)D")
                                 , mpurity = Pure
                                 , mnullability = NonNullableMethod
                                 }
@@ -176,7 +187,7 @@ test TestUnit{..} = do
         fDB_n = merge $ map afieldDB_null allDBs
         mDB_n = merge $ map amethodDB_null allDBs
         cls   = S.unions $ map aclasses allDBs
-    
+
     let classes = [className]
         targ = map (\case 
                     UField fld fp fn -> EFieldID fld 
