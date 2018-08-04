@@ -99,6 +99,20 @@ tests = [ TestUnit { className = "T1"
                                  }
                              ]
                     }
+        , TestUnit { className = "T6"
+                    , sources = ["java.db"] 
+                    , units = [ UField 
+                                { field = ("T6.q", "LT6;")
+                                , fpurity = Normal
+                                , fnullability = NullableField
+                                 }
+                             , UMethod 
+                                { method = ("T6.f", "(I)I")
+                                , mpurity = Pure
+                                , mnullability = NonNullableMethod
+                                }
+                            ]
+                    }
         ]
 
 -------------------------------------------------------
