@@ -2,6 +2,8 @@
 
 [![CircleCI](https://circleci.com/gh/mbrc12/etanol.svg?style=svg)](https://circleci.com/gh/mbrc12/etanol)
 
+_The rationale behind Etanol is explained in [this](https://mbrc12.github.io/blog/posts/2018-08-06-2.html) blog post. Please refer to it for a less technical discussion._
+
 The first part of this document describes the command line tool. The second part describes the API.
 
 ## Installation
@@ -17,6 +19,14 @@ $ etanolx
 ```
 
 `etanolx` is the name of the executable. You can try running `etanolx --help` for further help.
+
+To test whether is etanol is working as expected, run
+
+```
+$ sh test.sh
+```
+
+and check if there are any errors.
 
 ## Example
 
