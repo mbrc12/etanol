@@ -9,10 +9,13 @@ import Etanol.Driver
 import Etanol.Types
 import qualified Etanol.Crawler as CB
 import qualified ByteCodeParser.BasicTypes as BT
+import qualified Data.Map as M
+import qualified Data.Text as T
 
 import Control.Monad
 import System.Directory (canonicalizePath)
 import System.Environment
+import System.IO
 
 import Options.Applicative
 import Data.Semigroup
@@ -27,6 +30,7 @@ data Options
         , output_path  :: FilePath
         }
     | Benchmark { benchmark_path :: String }
+    | Prettify { prettify_path :: FilePath, pre_output_path :: FilePath }
     | Version 
 
     deriving Show
@@ -60,6 +64,39 @@ performTasks (Benchmark path) = do
 
 -- Parsers begin
 
+performTasks (Prettify path output) = do
+    putStrLn $ "Outputing pretty output for " ++ path ++ " to " ++ output ++ " ..."
+    absPath <- canonicalizePath path
+    absOut  <- canonicalizePath output
+    db <- loadAllDB absPath
+
+    let fDB = afieldDB db
+        mDB = amethodDB db
+        fDB_n = afieldDB_null db
+        mDB_n = amethodDB_null db
+
+    withFile absOut WriteMode $ \handle -> do
+        hPutStrLn handle "Field Purity Results: "
+        showAll handle fDB
+        hPutStrLn handle "======================================"
+        hPutStrLn handle"Method Purity Results: "
+        showAll handle mDB
+        hPutStrLn handle "======================================"
+        hPutStrLn handle "Field Nullability Results: "
+        showAll handle fDB_n
+        hPutStrLn handle "======================================"
+        hPutStrLn handle "Method Nullability Results: "
+        showAll handle mDB_n
+        hPutStrLn handle "======================================"
+        hPutStrLn handle "End of output."
+                                
+                                
+showAll :: (Show c) => Handle -> M.Map (T.Text, T.Text) c -> IO ()
+showAll handle db = mapM_ (\((x, s), v) -> 
+    hPutStrLn handle $ "- " ++ T.unpack x ++ " [" ++ T.unpack s ++ "] : " ++ show v
+    ) $ M.toList db
+
+        
 versionParser :: Parser Options
 versionParser = flag' Version
     ( long "version"
@@ -103,9 +140,25 @@ benchmarkParser = Benchmark <$> strOption
     <>  hidden
     )
 
+prettifyParser :: Parser Options
+prettifyParser = Prettify <$> strOption 
+    (   long "prettify"
+    <>  short 'p'
+    <>  help "Prettify the outputted database file."
+    <>  completer (bashCompleter "file")
+    <>  metavar "DB FILEPATH"
+    )
+    <*> strOption 
+    (   long "output"
+    <>  short 'o'
+    <>  help "Output path."
+    <>  value "output.txt"
+    <>  metavar "FILENAME"
+    )
+
 parser :: Parser Options
 parser = helper <*>
-        analyseParser <|> benchmarkParser <|> versionParser
+        analyseParser <|> benchmarkParser <|> prettifyParser <|> versionParser
 
 executableParser :: IO Options
 executableParser = execParser $

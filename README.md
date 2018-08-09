@@ -67,6 +67,14 @@ Method Nullability:
 
 To know more about what each annotation means, please refer to the [Wiki](https://github.com/mbrc12/etanol/wiki). More information about each specific annotation will be added soon.
 
+Also, in case you want to view what a method/field is annotated with, just use
+
+```
+$ etanolx -p <Outputted .db file>
+```
+
+This will prettify the `.db` file and output the results to `output.txt` (you can change that by passing a `-o <filename>` argument). The output
+is plain-text, so you can search the required field/method by its fully qualified name.
 
 ## Usage
 
